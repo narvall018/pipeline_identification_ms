@@ -1,116 +1,109 @@
-# Pipeline d'Identification MS
+# 🔬 Pipeline d'Identification MS
 
-Pipeline d'analyse pour l'identification de composés à partir de données de spectrométrie de masse. Cette pipeline intègre:
-- Détection de pics MS1 (utilisant DEIMoS)
-- Calibration CCS
-- Identification de composés
-- Analyse MS2 et calcul de scores de similarité
+Pipeline d'identification de composés intégrant MS1, mobilité ionique (CCS) et MS2.
 
-## Prérequis
+## ⚡ Détection des pics
 
-- Git
-- Python 3.9+
-- Conda ou Miniconda
+Extraction des pics selon trois dimensions analytiques :
+- Masse exacte (m/z)
+- Temps de rétention chromatographique (RT)
+- Mobilité ionique (DT)
 
-## Installation Rapide
+## 🎯 Tolérances d'identification
 
+L'identification intègre quatre niveaux d'information analytique :
+- Masse exacte : ± 5 ppm
+- Section efficace de collision : ± 8%
+- Temps de rétention : ± 2 min
+- Comparaison des spectres MS2
+
+## 📊 Résultats types
+
+| Composé | m/z mesuré | m/z théorique | Erreur (ppm) | CCS | RT (min) | Score MS2 | Formule | Adduit |
+|---------|------------|---------------|--------------|-----|----------|-----------|----------|---------|
+| Caféine | 195.0879 | 195.0882 | -1.11 | 143.97 | 4.01 | 0.89 | C8H10N4O2 | [M+H]+ |
+| Paracétamol | 152.0706 | 152.0712 | -3.94 | 131.45 | 3.22 | 0.92 | C8H9NO2 | [M+H]+ |
+| Ibuprofène | 207.1378 | 207.1380 | -0.96 | 152.88 | 8.45 | 0.78 | C13H18O2 | [M+H]+ |
+
+## 📦 Installation
+
+1. Cloner le repository :
 ```bash
-# Cloner le repository
-git clone [URL_DU_REPO]
-cd pipeline_identification
+git clone https://github.com/narvall018/pipeline_identification_ms.git
+cd pipeline_identification_ms
+```
 
-# Créer et activer l'environnement (installe automatiquement toutes les dépendances y compris DEIMoS)
+2. Créer l'environnement conda :
+```bash
 conda env create -f environment.yml
 conda activate ms_pipeline
+```
 
-# Vérifier l'installation
+3. Vérifier l'installation :
+```bash
 python -c "import deimos; print(deimos.__version__)"
 ```
 
-## Structure du Projet
+4. ⚠️ Base de données de référence (requis) :
+   - Base de données NORMAN [📥 Télécharger ici](https://drive.google.com/file/d/1mZa1r9RZ4Ioy1cILJqIteAz3vUs_UIaU/view?usp=drive_link)
+   - Créer un dossier `databases` dans `data/input/`
+   - Copier le fichier `norman_all_ccs_all_rt_pos_neg_with_ms2.h5` dans `data/input/databases/`
+
+## 📁 Structure du Projet
 
 ```
-pipeline_identification/
+pipeline_identification_ms/
 ├── data/
 │   ├── input/
-│   │   ├── samples/          # Fichiers d'échantillons (.parquet)
-│   │   ├── calibration/      # Données de calibration CCS
-│   │   └── database/         # Base de données de référence
-│   ├── intermediate/         # Données intermédiaires générées
-│   └── output/              # Résultats finaux et visualisations
-├── logs/                    # Fichiers de logs
+│   │   ├── samples/          # Fichiers .parquet
+│   │   ├── calibration/      # Calibration CCS
+│   │   └── databases/        # Base de données
+│   ├── intermediate/         # Données intermédiaires
+│   └── output/              # Résultats
+├── logs/
 ├── scripts/
 │   ├── config/             # Configuration
-│   ├── processing/         # Scripts de traitement
-│   ├── utils/             # Fonctions utilitaires
-│   └── visualization/     # Scripts de visualisation
-└── tests/                 # Tests unitaires
+│   ├── processing/         # Traitement
+│   ├── utils/             # Utilitaires
+│   └── visualization/     # Visualisation
+└── tests/
 ```
 
-## Utilisation
+## 🚀 Utilisation
 
-1. Placer les fichiers d'entrée:
-   - Fichiers .parquet dans `data/input/samples/`
-   - Données de calibration dans `data/input/calibration/`
-   - Base de données dans `data/input/database/`
+1. Placer les fichiers :
+   - `.parquet` dans `data/input/samples/`
+   - Calibration dans `data/input/calibration/`
+   - Base de données dans `data/input/databases/`
 
-2. Lancer la pipeline:
+2. Exécuter :
 ```bash
 python main.py
 ```
 
-## Pipeline de Traitement
+## ⚙️ Configuration
 
-1. **Détection des pics (DEIMoS)**
-   - Lecture des données brutes (.parquet)
-   - Préparation des données MS1
-   - Détection et clustering des pics
-
-2. **Calibration CCS**
-   - Calcul des valeurs CCS
-   - Application de la calibration
-
-3. **Identification des composés**
-   - Recherche dans la base de données
-   - Calcul des scores de correspondance
-   - Attribution des niveaux de confiance
-
-4. **Analyse MS2**
-   - Extraction des spectres MS2
-   - Comparaison avec la base de données
-   - Calcul des scores de similarité
-
-## Configuration
-
-Les paramètres de la pipeline sont configurables dans `scripts/config/config.py`:
-- Tolérances pour l'identification
-- Paramètres de détection des pics
-- Critères de confiance
-- Chemins des fichiers
-
-## Développement
-
-### Tests
-```bash
-python -m pytest tests/
+Configuration dans `scripts/config/config.py` :
+```python
+IDENTIFICATION = {
+    'tolerances': {
+        'mz_ppm': 5,
+        'ccs_percent': 8,
+        'rt_min': 2
+    }
+}
 ```
 
-### Logging
-Les logs sont enregistrés dans `logs/peak_detection.log`
+## 🐛 Dépannage
 
-## Résolution des problèmes courants
-
-Si vous rencontrez des problèmes avec DEIMoS :
+En cas d'erreur DEIMoS :
 ```bash
 conda activate ms_pipeline
 pip uninstall deimos
 pip install git+https://github.com/pnnl/deimos.git
 ```
 
-## Dépendances principales
+## 📝 Logging
 
-- DEIMoS: Pour la détection des pics et le traitement MS
-- NumPy: Pour les calculs numériques
-- Pandas: Pour la manipulation des données
-- Scikit-learn: Pour le clustering et le machine learning
-- SciPy: Pour les calculs scientifiques
+Fichiers logs : `logs/peak_detection.log` 
+
