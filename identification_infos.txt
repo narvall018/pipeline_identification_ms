@@ -1,0 +1,27 @@
+Niveaux de confiance de l'identification :
+
+1. Match parfait (Niveau 1)
+   - m/z : < 5 ppm
+   - CCS expérimentale : < 8%
+   - RT observé : < 0.5 min
+
+2. Match très probable (Niveau 2)
+   - m/z : < 5 ppm
+   - CCS expérimentale : < 8%
+   - RT observé : < 1.0 min
+
+3. Match probable (Niveau 3)
+   - m/z : < 5 ppm
+   Et l'une des combinaisons :
+   - CCS expérimentale + RT prédit
+   - CCS expérimentale + RT observé hors tolérance
+   - CCS prédite + RT observé < 2.0 min
+
+4. Match possible (Niveau 4)
+   - m/z : < 5 ppm
+   Et :
+   - CCS prédite + RT prédit
+   - ou CCS prédite seule
+
+5. Match incertain (Niveau 5)
+   - Match m/z uniquement
