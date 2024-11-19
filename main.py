@@ -72,10 +72,10 @@ def process_file(file_path, calibrator, identifier, data_type='samples', total_f
             return
         
         # 4. Clustering des pics
-        print("\n🔄 Clustering des pics...")
+        #print("\n🔄 Clustering des pics...")
         clustered_peaks = cluster_peaks(peaks)
         if len(clustered_peaks) > 0:
-            print(f"   ✓ Pics après clustering: {len(clustered_peaks)}")
+            #print(f"   ✓ Pics après clustering: {len(clustered_peaks)}")
             save_peaks(clustered_peaks, sample_name, "clustered_peaks", data_type, metadata)
         else:
             print("   ✗ Pas de pics après clustering")
@@ -131,8 +131,8 @@ def process_file(file_path, calibrator, identifier, data_type='samples', total_f
        
         # Résumé final
         print(f"\n✨ Traitement complet pour {sample_name}")
-        print(f"   - Pics initiaux: {len(peaks)}")
-        print(f"   - Pics après clustering: {len(clustered_peaks)}")
+        print(f"   - Pics : {len(peaks)}")
+        #print(f"   - Pics après clustering: {len(clustered_peaks)}")
         print(f"   - Pics avec CCS: {len(peaks_with_ccs)}")
         if matches_df is not None and not matches_df.empty:
             print(f"   - Pics identifiés: {n_unique_peaks}")
