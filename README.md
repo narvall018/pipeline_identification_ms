@@ -35,7 +35,7 @@ cd pipeline_identification_ms
 
 2. Créer l'environnement conda :
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.yml -v # 5min
 conda activate ms_pipeline
 ```
 
