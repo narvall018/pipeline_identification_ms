@@ -134,12 +134,11 @@ class MS2Comparator(object):
 
 
 	def calculate_similarity_score(
-					self,
-					exp_mz: List[float],
-					exp_int: List[float],
-					ref_mz: List[float],
-					ref_int: List[float]
-				) -> float:
+		self, exp_mz: List[float],
+		exp_int: List[float],
+		ref_mz: List[float],
+		ref_int: List[float]
+	) -> float:
 		"""
 		Calcule le score de similarité entre deux spectres en utilisant la distance cosinus.
 
@@ -150,43 +149,43 @@ class MS2Comparator(object):
 			ref_int (List[float]): Liste des intensités de référence.
 
 		Returns:
-			float: Score de similarité (entre 0 et 1). Retourne 0 en cas de problème.
+			float: Score de similarité (entre 0 et 1). Retourne 0 en cas d'erreur ou de données insuffisantes.
 		"""
-
 		try:
-			# Vérifie si les listes de m/z sont vides
+			# Vérification et conversion des données d'entrée en listes
+			exp_mz = exp_mz if isinstance(exp_mz, list) else ([] if pd.isna(exp_mz).any() else exp_mz.tolist())
+			exp_int = exp_int if isinstance(exp_int, list) else ([] if pd.isna(exp_int).any() else exp_int.tolist())
+			ref_mz = ref_mz if isinstance(ref_mz, list) else ([] if pd.isna(ref_mz).any() else ref_mz.tolist())
+			ref_int = ref_int if isinstance(ref_int, list) else ([] if pd.isna(ref_int).any() else ref_int.tolist())
+
+			# Vérifie si les spectres contiennent des données valides
 			if not exp_mz or not ref_mz:
-				# Retourne un score de 0 si l'une des listes est absente
 				return 0.0
 
-			# Normalise les spectres expérimentaux et de référence
+			# Normalisation des spectres expérimentaux et de référence
 			exp_mz, exp_int = self.normalize_spectrum(exp_mz, exp_int)
 			ref_mz, ref_int = self.normalize_spectrum(ref_mz, ref_int)
 
-			# Vérifie si les listes d'intensités normalisées sont vides
+			# Vérifie si les spectres normalisés contiennent des intensités valides
 			if not exp_int or not ref_int:
-				# Retourne un score de 0 si l'une des listes est vide après normalisation
 				return 0.0
 
-			# Aligne les spectres normalisés
+			# Alignement des spectres pour une comparaison directe
 			aligned_exp, aligned_ref = self.align_spectra(exp_mz, exp_int, ref_mz, ref_int)
 
-			# Vérifie si les spectres alignés sont vides
+			# Vérifie si l'alignement a produit des résultats
 			if not aligned_exp or not aligned_ref:
-				# Retourne un score de 0 si l'alignement a échoué
 				return 0.0
 
-			# Calcule le score de similarité en utilisant la distance cosinus
+			# Calcul du score de similarité en utilisant la distance cosinus
 			similarity = 1 - cosine(aligned_exp, aligned_ref)
 
-			# Évite les scores négatifs dus à des erreurs d'arrondi et retourne le maximum entre 0 et le score calculé
+			# Retourne le score en s'assurant qu'il est positif (éviter les erreurs d'arrondi)
 			return max(0, similarity)
 
 		except Exception as e:
-			# Log l'erreur survenue lors du calcul du score de similarité
+			# Log toute erreur rencontrée pendant le calcul
 			logger.error(f"Erreur dans le calcul du score de similarité : {str(e)}")
-
-			# Retourne un score de 0 en cas d'erreur
 			return 0.0
 
 
