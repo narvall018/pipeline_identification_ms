@@ -181,64 +181,135 @@ def find_matches_asof(
 
 
 def find_matches_window(
-	peaks_df: pd.DataFrame,
-	db_df: pd.DataFrame,
-	tolerances: Optional[Dict[str, float]] = None
+		peaks_df: pd.DataFrame,
+		db_df: pd.DataFrame,
+		tolerances: Optional[Dict[str, float]] = None
 ) -> pd.DataFrame:
-	"""
-	Trouve les correspondances entre les pics et la base de données dans une fenêtre définie par des tolérances.
+    """
+    Trouve les correspondances entre les pics et une base de données de molécules dans une fenêtre définie par des tolérances.
 
-	Args:
-		peaks_df (pd.DataFrame): Données des pics détectés.
-		db_df (pd.DataFrame): Base de données de référence.
-		tolerances (Optional[Dict[str, float]]): Tolérances pour la correspondance.
+    Args:
+        peaks_df (pd.DataFrame): Données des pics détectés (m/z, RT, CCS, etc.).
+        db_df (pd.DataFrame): Base de données des molécules de référence.
+        tolerances (Optional[Dict[str, float]]): Tolérances pour les correspondances (m/z en ppm, CCS en %, RT en minutes).
 
-	Returns:
-		pd.DataFrame: DataFrame contenant les correspondances trouvées avec les détails.
-	"""
-	# Définit les tolérances par défaut si elles ne sont pas fournies
-	if tolerances is None:
-		tolerances = {
-			'mz_ppm': 5,         # Tolérance pour m/z (en ppm)
-			'ccs_percent': 8,    # Tolérance pour CCS (en pourcentage)
-			'rt_min': 2          # Tolérance pour RT (en minutes)
-		}
+    Returns:
+        pd.DataFrame: DataFrame contenant les correspondances avec les scores et niveaux de confiance.
+    """
+    # Définit les tolérances par défaut si elles ne sont pas fournies
+    if tolerances is None:
+        tolerances = {
+            'mz_ppm': 5,           # Tolérance en ppm pour la valeur m/z
+            'ccs_percent': 8,      # Tolérance en pourcentage pour la CCS
+            'rt_min': 2            # Tolérance en minutes pour le temps de rétention
+        }
 
-	# Trie les données de la base de données par 'mz' pour les recherches optimisées
-	db_df = db_df.sort_values('mz').reset_index(drop=True)
-	db_mz = db_df['mz'].values  # Extrait les valeurs de m/z en tant que tableau numpy
+    # Création de clés composites dans `db_df` pour 'Name', 'adduct' et 'SMILES'
+    db_df['Name_str'] = db_df['Name'].astype(str).fillna('')
+    db_df['adduct_str'] = db_df['adduct'].astype(str).fillna('')
+    db_df['SMILES_str'] = db_df['SMILES'].astype(str).fillna('')
 
-	# Liste pour stocker toutes les correspondances trouvées
-	all_matches = []
+    # Génère un identifiant unique par molécule basé sur 'Name' et 'adduct', ou sur 'SMILES' si indisponibles
+    db_df['molecule_id'] = db_df.apply(
+        lambda row: f"{row['Name_str']}_{row['adduct_str']}" if row['Name_str'] and row['adduct_str'] else row['SMILES_str'],
+        axis=1
+    )
 
-	# Parcourt chaque pic dans les données des pics détectés
-	for peak in peaks_df.itertuples():
-		# Calcule la tolérance en m/z en unités absolues (Da)
-		mz_tolerance = peak.mz * tolerances['mz_ppm'] * 1e-6
+    # Ajoute une colonne pour indiquer la disponibilité des données MS2
+    db_df['has_ms2_db'] = db_df['peaks_ms2_mz'].apply(lambda x: 1 if isinstance(x, list) else 0)
 
-		# Définit les limites inférieure et supérieure pour la fenêtre de recherche
-		mz_min = peak.mz - mz_tolerance
-		mz_max = peak.mz + mz_tolerance
+    # Agrège par `molecule_id` pour vérifier si MS2 est disponible au moins une fois
+    ms2_df = db_df.groupby('molecule_id')['has_ms2_db'].max().reset_index()
+    db_df = db_df.drop(columns=['has_ms2_db']).merge(ms2_df, on='molecule_id', how='left')
 
-		# Trouve les indices dans la base de données correspondant à la fenêtre définie
-		idx_start = np.searchsorted(db_mz, mz_min, side='left')
-		idx_end = np.searchsorted(db_mz, mz_max, side='right')
+    # Trie la base de données par m/z pour une recherche optimisée
+    db_df = db_df.sort_values('mz').reset_index(drop=True)
+    db_mz = db_df['mz'].values
 
-		# Extrait les correspondances dans la fenêtre
-		matches = db_df.iloc[idx_start:idx_end]
+    all_matches = []  # Stocke les correspondances trouvées
 
-		# Si des correspondances sont trouvées, les ajoute à la liste des résultats
-		if not matches.empty:
-			for match in matches.itertuples():
-				# Calcule les détails de la correspondance
-				match_details = {
-					'peak_mz': peak.mz,
-					'peak_rt': peak.retention_time,
-					'peak_dt': peak.drift_time,
-					'match_mz': match.mz,
-					'mz_error_ppm': (peak.mz - match.mz) / match.mz * 1e6
-				}
-				all_matches.append(match_details)
+    # Parcourt chaque pic dans les données des pics détectés
+    for peak in peaks_df.itertuples():
+        # Calcule les limites de tolérance pour le m/z
+        mz_tolerance = peak.mz * tolerances['mz_ppm'] * 1e-6
+        mz_min, mz_max = peak.mz - mz_tolerance, peak.mz + mz_tolerance
 
-	# Retourne les correspondances sous forme de DataFrame
-	return pd.DataFrame(all_matches)
+        # Recherche efficace des indices correspondant aux limites de tolérance
+        idx_start = np.searchsorted(db_mz, mz_min, side='left')
+        idx_end = np.searchsorted(db_mz, mz_max, side='right')
+        matches = db_df.iloc[idx_start:idx_end]
+
+        if not matches.empty:
+            # Parcourt chaque correspondance potentielle
+            for match in matches.itertuples():
+                # Vérification des tolérances pour le temps de rétention (RT)
+                rt_error, rt_match = None, False
+                if pd.notna(match.Observed_RT):
+                    rt_error = abs(peak.retention_time - match.Observed_RT)
+                    rt_match = rt_error <= tolerances['rt_min']
+                elif pd.notna(match.Predicted_RT):
+                    rt_error = abs(peak.retention_time - match.Predicted_RT)
+                    rt_match = rt_error <= tolerances['rt_min']
+
+                # Vérification des tolérances pour la CCS
+                ccs_error, ccs_match = None, False
+                if pd.notna(match.ccs_exp):
+                    ccs_error = abs((peak.CCS - match.ccs_exp) / match.ccs_exp * 100)
+                    ccs_match = ccs_error <= tolerances['ccs_percent']
+                elif pd.notna(match.ccs_pred):
+                    ccs_error = abs((peak.CCS - match.ccs_pred) / match.ccs_pred * 100)
+                    ccs_match = ccs_error <= tolerances['ccs_percent']
+
+                # Ajoute la correspondance si elle respecte les tolérances
+                if (rt_match or rt_error is None) and (ccs_match or ccs_error is None):
+                    match_details = {
+                        'peak_mz': peak.mz,
+                        'peak_rt': peak.retention_time,
+                        'peak_dt': peak.drift_time,
+                        'peak_intensity': peak.intensity,
+                        'peak_ccs': peak.CCS,
+                        'match_name': match.Name,
+                        'match_adduct': match.adduct,
+                        'match_smiles': match.SMILES,
+                        'match_mz': match.mz,
+                        'mz_error_ppm': (peak.mz - match.mz) / match.mz * 1e6,
+                        'match_ccs_exp': match.ccs_exp,
+                        'match_ccs_pred': match.ccs_pred,
+                        'match_rt_obs': match.Observed_RT,
+                        'match_rt_pred': match.Predicted_RT,
+                        'rt_error_min': rt_error,
+                        'ccs_error_percent': ccs_error,
+                        'has_ms2_db': match.has_ms2_db,
+                        'molecule_id': match.molecule_id
+                    }
+
+                    # Calcul des scores et du niveau de confiance
+                    score_details = calculate_match_scores(match_details)
+                    confidence_level, confidence_reason = assign_confidence_level(match_details)
+
+                    match_details.update({
+                        'individual_scores': score_details['individual_scores'],
+                        'global_score': score_details['global_score'],
+                        'ccs_source': score_details['ccs_source'],
+                        'rt_source': score_details['rt_source'],
+                        'confidence_level': confidence_level,
+                        'confidence_reason': confidence_reason
+                    })
+                    all_matches.append(match_details)
+
+    # Conversion des correspondances en DataFrame
+    matches_df = pd.DataFrame(all_matches) if all_matches else pd.DataFrame()
+
+    if not matches_df.empty:
+        # Trie pour prioriser les correspondances avec MS2 et le score global
+        matches_df = matches_df.sort_values(
+            ['molecule_id', 'has_ms2_db', 'global_score'],
+            ascending=[True, False, False]
+        )
+        # Supprime les doublons en conservant les meilleures correspondances
+        matches_df = matches_df.drop_duplicates(subset='molecule_id', keep='first')
+
+        # Trie final par niveau de confiance et score global
+        matches_df = matches_df.sort_values(['confidence_level', 'global_score'], ascending=[True, False])
+
+    return matches_df
