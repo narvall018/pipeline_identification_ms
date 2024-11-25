@@ -5,6 +5,7 @@
 # Importation des modules
 import re
 import logging
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
@@ -35,7 +36,7 @@ def sanitize_filename(filename: str) -> str:
 	return filename
 
 
-def read_parquet_data(file_path: str) -> Tuple[pa.Table, Optional[Dict[bytes, bytes]]]:
+def read_parquet_data(file_path: str) -> Tuple[pd.DataFrame, Optional[Dict[bytes, bytes]]]:
 	"""
 	Lit un fichier Parquet et retourne les données sous forme de DataFrame et les métadonnées.
 
@@ -43,7 +44,7 @@ def read_parquet_data(file_path: str) -> Tuple[pa.Table, Optional[Dict[bytes, by
 		file_path (str): Chemin vers le fichier Parquet.
 
 	Returns:
-		Tuple[pa.Table, Optional[Dict[bytes, bytes]]]: Tuple contenant les données sous forme de `pa.Table`
+		Tuple[pd.DataFrame, Optional[Dict[bytes, bytes]]]: Tuple contenant les données sous forme de `pa.Table`
 		et les métadonnées du fichier.
 
 	Raises:
@@ -56,14 +57,17 @@ def read_parquet_data(file_path: str) -> Tuple[pa.Table, Optional[Dict[bytes, by
 		# Lit les données du fichier sous forme de tableau Apache Arrow
 		table = parquet_file.read()
 
+		# Transforme la table en pandas dataframe
+		data = table.to_pandas()
+
 		# Récupère les métadonnées associées au schéma du fichier
-		metadata = parquet_file.schema.metadata
+		metadata = table.schema.metadata
 
 		# Log le succès de l'opération
 		logger.info(f"Fichier Parquet lu avec succès : {file_path}")
 
 		# Retourne les données et les métadonnées
-		return table, metadata
+		return data, metadata
 
 	except Exception as e:
 		# Log l'erreur si la lecture échoue
