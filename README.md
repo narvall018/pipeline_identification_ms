@@ -27,63 +27,66 @@ L'identification intègre quatre niveaux d'information analytique :
 
 ## 📦 Installation
 
-### **Conda**
+###  🐉🍃 **Environnement Conda**
 
-1. Cloner le repository :
-```bash
-git clone https://github.com/narvall018/pipeline_identification_ms.git
-cd pipeline_identification_ms
-```
+1. ***Cloner le repository***
+	```bash
+	git clone https://github.com/narvall018/pipeline_identification_ms.git;
+	cd pipeline_identification_ms
+	```
 
-2. Créer l'environnement conda :
-```bash
-conda env create -f environment.yml -v 
-conda activate ms_pipeline
-```
+2. ***Créer l'environnement conda***
+	```bash
+	conda env create -f environment.yml -v 
+	conda activate ms_pipeline
+	```
 
-3. Vérifier l'installation :
-```bash
-python -c "import deimos; print(deimos.__version__)"
-```
+3. ***Vérifier l'installation***
+	```bash
+	python -c "import deimos; print(deimos.__version__)"
+	```
 
-4. ⚠️ Base de données de référence (requis) :
+4. ⚠️ ***Base de données de référence (requis)***
    - Base de données NORMAN [📥 Télécharger ici](https://drive.google.com/file/d/1mZa1r9RZ4Ioy1cILJqIteAz3vUs_UIaU/view?usp=drive_link)
    - Créer un dossier `databases` dans `data/input/`
    - Copier le fichier `norman_all_ccs_all_rt_pos_neg_with_ms2.h5` dans `data/input/databases/`
 
-### **Environnement python**
+### 🐍💻 **Environnement Python**
 
-1. Cloner le repository :
-```bash
-git clone https://github.com/narvall018/pipeline_identification_ms.git
-```
+1. ***Cloner le repository***
 
-2. Créer un environnement Python
-```bash
-python3 -m venv <NOM>
-```
+	```bash
+	git clone https://github.com/narvall018/pipeline_identification_ms.git
+	```
 
-3. Activer l'environnement
-   Sous Linux/macOS :
+2. ***Créer un environnement Python***
+	```bash
+	python3 -m venv <NOM>
+	```
+
+3. ***Activer l'environnement***
+	
+	- ***Sous Linux/macOS*** :
+		```bash
+		source <NOM>/bin/activate
+		```
+
+	- ***Sous Windows*** :
+		```bash
+		<NOM>\Scripts\activate
+		```
+
+4. ***Aller dans le dossier du repository***
    ```bash
-   source <NOM>/bin/activate
-   ```
-   Sous Windows :
-   ```bash
-   <NOM>\Scripts\activate
+   cd pipeline_identification_ms/
    ```
 
-4. Aller dans le dossier du repository
-   ```bash
-   cd <NOM_DU_REPOSITORY>
-   ```
-
-5. Installer les dépendances
+5. ***Installer les dépendances***
    ```bash
    pip3 install -r requirements.txt
    ```
 
-6. ⚠️ Base de données de référence (requis) :
+6. ⚠️ ***Base de données de référence (requis)*** :
    - Base de données NORMAN [📥 Télécharger ici](https://drive.google.com/file/d/1mZa1r9RZ4Ioy1cILJqIteAz3vUs_UIaU/view?usp=drive_link)
    - Créer un dossier `databases` dans `data/input/`
    - Copier le fichier `norman_all_ccs_all_rt_pos_neg_with_ms2.h5` dans `data/input/databases/`
@@ -125,11 +128,11 @@ python main.py
 Configuration dans `scripts/config/config.py` :
 ```python
 IDENTIFICATION = {
-    'tolerances': {
-        'mz_ppm': 5,
-        'ccs_percent': 8,
-        'rt_min': 2
-    }
+	'tolerances': {
+		'mz_ppm': 5,
+		'ccs_percent': 8,
+		'rt_min': 2
+	}
 }
 ```
 
@@ -144,5 +147,21 @@ pip install git+https://github.com/pnnl/deimos.git
 
 ## 📝 Logging
 
-Fichiers logs : `logs/peak_detection.log` 
+Fichiers logs : `logs/peak_detection.log`
 
+## ⚖️ Licence
+
+Ce projet est sous licence Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0). Vous êtes libre de :
+
+- Partager : copier et redistribuer le matériel sous quelque support que ce soit ou sous n'importe quel format.
+- Adapter : remixer, transformer et créer à partir du matériel.
+
+Selon les conditions suivantes :
+
+- Attribution : Vous devez donner le crédit approprié, fournir un lien vers la licence et indiquer si des modifications ont été apportées. Vous devez le faire de la manière suggérée par l'auteur, mais pas d'une manière qui suggère qu'il vous soutient ou soutient votre utilisation du matériel.
+
+- Utilisation non commerciale : Vous ne pouvez pas utiliser le matériel à des fins commerciales.
+
+[![Logo CC BY-NC 4.0](https://licensebuttons.net/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
+
+[En savoir plus sur la licence CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
