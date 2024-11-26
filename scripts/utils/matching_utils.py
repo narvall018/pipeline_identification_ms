@@ -26,8 +26,8 @@ def calculate_match_scores(
 	# Définit les tolérances par défaut si elles ne sont pas fournies
 	if tolerances is None:
 		tolerances = {
-			'mz_ppm': 5,          # Tolérance pour l'erreur m/z (en ppm)
-			'ccs_percent': 8,     # Tolérance pour l'erreur CCS (en pourcentage)
+			'mz_ppm': 10,          # Tolérance pour l'erreur m/z (en ppm)
+			'ccs_percent': 12,     # Tolérance pour l'erreur CCS (en pourcentage)
 			'rt_min': 2           # Tolérance pour l'erreur RT (en minutes)
 		}
 
@@ -99,9 +99,9 @@ def assign_confidence_level(
 	# Définit les tolérances par défaut si elles ne sont pas fournies
 	if tolerances is None:
 		tolerances = {
-			'mz_ppm': 5,          # Tolérance pour l'erreur m/z (en ppm)
-			'ccs_exp': 8,         # Tolérance pour CCS expérimentale (en pourcentage)
-			'ccs_exp_l2': 8,      # Tolérance pour CCS expérimentale, niveau 2
+			'mz_ppm': 10,          # Tolérance pour l'erreur m/z (en ppm)
+			'ccs_exp': 12,         # Tolérance pour CCS expérimentale (en pourcentage)
+			'ccs_exp_l2': 12,      # Tolérance pour CCS expérimentale, niveau 2
 			'rt_obs_l1': 0.5,     # Tolérance pour RT observé, niveau 1 (en minutes)
 			'rt_obs_l2': 1.0,     # Tolérance pour RT observé, niveau 2 (en minutes)
 			'rt_pred': 3.0        # Tolérance pour RT prédit (en minutes)
@@ -199,8 +199,8 @@ def find_matches_window(
     # Définit les tolérances par défaut si elles ne sont pas fournies
     if tolerances is None:
         tolerances = {
-            'mz_ppm': 5,           # Tolérance en ppm pour la valeur m/z
-            'ccs_percent': 8,      # Tolérance en pourcentage pour la CCS
+            'mz_ppm': 10,           # Tolérance en ppm pour la valeur m/z
+            'ccs_percent': 12,      # Tolérance en pourcentage pour la CCS
             'rt_min': 2            # Tolérance en minutes pour le temps de rétention
         }
 
