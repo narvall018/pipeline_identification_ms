@@ -27,6 +27,8 @@ L'identification intègre quatre niveaux d'information analytique :
 
 ## 📦 Installation
 
+### **Conda**
+
 1. Cloner le repository :
 ```bash
 git clone https://github.com/narvall018/pipeline_identification_ms.git
@@ -45,6 +47,43 @@ python -c "import deimos; print(deimos.__version__)"
 ```
 
 4. ⚠️ Base de données de référence (requis) :
+   - Base de données NORMAN [📥 Télécharger ici](https://drive.google.com/file/d/1mZa1r9RZ4Ioy1cILJqIteAz3vUs_UIaU/view?usp=drive_link)
+   - Créer un dossier `databases` dans `data/input/`
+   - Copier le fichier `norman_all_ccs_all_rt_pos_neg_with_ms2.h5` dans `data/input/databases/`
+
+### **Environnement python**
+
+1. Cloner le repository :
+```bash
+git clone https://github.com/narvall018/pipeline_identification_ms.git
+```
+
+2. Créer un environnement Python
+```bash
+python3 -m venv <NOM>
+```
+
+3. Activer l'environnement
+   Sous Linux/macOS :
+   ```bash
+   source <NOM>/bin/activate
+   ```
+   Sous Windows :
+   ```bash
+   <NOM>\Scripts\activate
+   ```
+
+4. Aller dans le dossier du repository
+   ```bash
+   cd <NOM_DU_REPOSITORY>
+   ```
+
+5. Installer les dépendances
+   ```bash
+   pip3 install -r requirements.txt
+   ```
+
+6. ⚠️ Base de données de référence (requis) :
    - Base de données NORMAN [📥 Télécharger ici](https://drive.google.com/file/d/1mZa1r9RZ4Ioy1cILJqIteAz3vUs_UIaU/view?usp=drive_link)
    - Créer un dossier `databases` dans `data/input/`
    - Copier le fichier `norman_all_ccs_all_rt_pos_neg_with_ms2.h5` dans `data/input/databases/`
