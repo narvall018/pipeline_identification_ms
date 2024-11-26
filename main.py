@@ -15,8 +15,15 @@ from scripts.processing.ccs_calibration import CCSCalibrator
 from scripts.processing.identification import CompoundIdentifier
 from scripts.processing.ms2_extraction import extract_ms2_for_matches
 from scripts.processing.ms2_comparaison import add_ms2_scores
-from scripts.visualization.plotting import plot_unique_molecules_per_sample
-
+import matplotlib.pyplot as plt 
+from scripts.visualization.plotting import (
+    plot_unique_molecules_per_sample,
+    plot_level1_molecules_per_sample,
+    plot_sample_similarity_heatmap,
+    plot_sample_similarity_heatmap_by_confidence,
+    analyze_sample_clusters,
+    plot_cluster_statistics
+)
 
 # Suppression des warnings pandas
 warnings.filterwarnings('ignore')
@@ -209,10 +216,77 @@ def main() -> None:
         output_dir = Path("output")
         output_dir.mkdir(exist_ok=True)
 
+        # Plot du nombre total de molécules par échantillon
         fig = plot_unique_molecules_per_sample("data/intermediate/samples")
         fig_path = output_dir / "molecules_per_sample.png"
         fig.savefig(fig_path)
-        print(f"   ✓ Visualisation sauvegardée dans {fig_path}")
+        plt.close()
+
+        # Plot des molécules niveau 1
+        fig = plot_level1_molecules_per_sample("data/intermediate/samples")
+        fig_path = output_dir / "level1_molecules_per_sample.png"
+        fig.savefig(fig_path)
+        plt.close()
+
+        print("\n📊 Analyse des similarités entre échantillons...")
+        
+        # Heatmap toutes identifications
+        fig_similarity = plot_sample_similarity_heatmap("data/intermediate/samples")
+        fig_similarity.savefig(output_dir / "sample_similarity_heatmap_all.png")
+        plt.close()
+
+        # Heatmap niveau 1 uniquement
+        fig_similarity_l1 = plot_sample_similarity_heatmap_by_confidence(
+            "data/intermediate/samples", 
+            confidence_levels=[1],
+            title_suffix=" - Niveau 1"
+        )
+        fig_similarity_l1.savefig(output_dir / "sample_similarity_heatmap_level1.png")
+        plt.close()
+
+        # Heatmap niveaux 1+2
+        fig_similarity_l12 = plot_sample_similarity_heatmap_by_confidence(
+            "data/intermediate/samples", 
+            confidence_levels=[1, 2],
+            title_suffix=" - Niveaux 1 et 2"
+        )
+        fig_similarity_l12.savefig(output_dir / "sample_similarity_heatmap_level1_2.png")
+        plt.close()
+
+        # Heatmap niveaux 1+2+3
+        fig_similarity_l123 = plot_sample_similarity_heatmap_by_confidence(
+            "data/intermediate/samples", 
+            confidence_levels=[1, 2, 3],
+            title_suffix=" - Niveaux 1, 2 et 3"
+        )
+        fig_similarity_l123.savefig(output_dir / "sample_similarity_heatmap_level1_2_3.png")
+        plt.close()
+
+        # Analyse des clusters
+        cluster_stats = analyze_sample_clusters("data/intermediate/samples", n_clusters=3)
+        
+        # Sauvegarde des statistiques de clusters dans un fichier texte
+        with open(output_dir / "cluster_analysis.txt", "w") as f:
+            f.write("Analyse des clusters d'échantillons\n")
+            f.write("================================\n\n")
+            for cluster_name, stats in cluster_stats.items():
+                f.write(f"\n{cluster_name}:\n")
+                f.write(f"Nombre d'échantillons: {stats['n_samples']}\n")
+                f.write(f"Moyenne de molécules par échantillon: {stats['avg_molecules_per_sample']:.1f}\n")
+                f.write("Molécules caractéristiques:\n")
+                for molecule in stats['characteristic_molecules'][:10]:  # Top 10 molécules
+                    f.write(f"- {molecule}\n")
+                f.write("\nÉchantillons dans ce cluster:\n")
+                for sample in stats['samples']:
+                    f.write(f"- {sample}\n")
+                f.write("\n" + "-"*50 + "\n")
+
+        # Visualisation des statistiques des clusters
+        fig_stats = plot_cluster_statistics(cluster_stats)
+        fig_stats.savefig(output_dir / "cluster_statistics.png")
+        plt.close()
+        
+        print(f"   ✓ Visualisations sauvegardées dans {output_dir}")
 
         # Fin du traitement
         print("\n✅ TRAITEMENT TERMINÉ AVEC SUCCÈS")
