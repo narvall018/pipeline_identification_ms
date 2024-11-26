@@ -27,7 +27,7 @@ L'identification intègre quatre niveaux d'information analytique :
 
 ## 📦 Installation
 
-###  🐉🍃 **Environnement Conda**
+###  🐉🍃 **Environnement Conda (recommandé)** 
 
 1. ***Cloner le repository***
 	```bash
