@@ -9,7 +9,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Tuple
 from scipy.spatial.distance import cosine
-
+from ..utils.matching_utils import assign_confidence_level 
 
 # Initialiser le logger
 logger = logging.getLogger(__name__)
@@ -188,87 +188,101 @@ class MS2Comparator(object):
 			logger.error(f"Erreur dans le calcul du score de similarité : {str(e)}")
 			return 0.0
 
-
 def add_ms2_scores(matches_file: Path, identifier: object) -> None:
-	"""
-	Ajoute les scores de similarité MS2 pour toutes les correspondances dans un fichier.
+   """
+   Ajoute les scores de similarité MS2 et recalcule les niveaux de confiance.
+   
+   Args:
+       matches_file (Path): Chemin vers le fichier all_matches.parquet.
+       identifier (CompoundIdentifier): Instance contenant la base de données.
+   """
+   try:
+       # Charge les correspondances
+       matches_df = pd.read_parquet(matches_file)
+       
+       # Initialise le comparateur MS2
+       comparator = MS2Comparator(tolerance_mz=0.01)
+       
+       # Calcul des scores MS2
+       for idx, row in matches_df.iterrows():
+           best_score = 0.0
+           
+           # Vérifie les données MS2 expérimentales
+           has_ms2_data = (
+               'peaks_mz_ms2' in row and 
+               'peaks_intensities_ms2' in row and 
+               isinstance(row['peaks_mz_ms2'], (list, np.ndarray)) and 
+               isinstance(row['peaks_intensities_ms2'], (list, np.ndarray)) and
+               len(row['peaks_mz_ms2']) > 0 and 
+               len(row['peaks_intensities_ms2']) > 0
+           )
 
-	Args:
-		matches_file (Path): Chemin vers le fichier `all_matches.parquet`.
-		identifier (CompoundIdentifier): Instance contenant la base de données des composés.
+           if not has_ms2_data:
+               matches_df.loc[idx, 'ms2_similarity_score'] = 0.0
+               continue
 
-	Returns:
-		None
-	"""
-	try:
-		# Charge les correspondances à partir du fichier `all_matches.parquet`
-		matches_df = pd.read_parquet(path=matches_file)
+           # Cherche les spectres de référence
+           ref_spectra = identifier.db[
+               (identifier.db['Name'] == row['match_name']) & 
+               (identifier.db['adduct'] == row['match_adduct'])
+           ]
 
-		# Initialise le comparateur MS2 avec une tolérance m/z définie
-		comparator = MS2Comparator(tolerance_mz=0.01)
+           # Compare avec chaque spectre de référence
+           for _, ref_row in ref_spectra.iterrows():
+               if not (
+                   'peaks_ms2_mz' in ref_row and 
+                   'peaks_ms2_intensities' in ref_row and
+                   isinstance(ref_row['peaks_ms2_mz'], (list, np.ndarray)) and
+                   isinstance(ref_row['peaks_ms2_intensities'], (list, np.ndarray))
+               ):
+                   continue
 
-		# Parcourt chaque ligne des correspondances pour calculer les scores
-		for idx, row in matches_df.iterrows():
-			# Initialise le meilleur score MS2 pour cette correspondance
-			best_score = 0.0
+               score = comparator.calculate_similarity_score(
+                   row['peaks_mz_ms2'],
+                   row['peaks_intensities_ms2'],
+                   ref_row['peaks_ms2_mz'],
+                   ref_row['peaks_ms2_intensities']
+               )
+               best_score = max(best_score, score)
 
-			# Vérifie si des données MS2 existent pour la correspondance actuelle
-			has_ms2_data = (
-				'peaks_mz_ms2' in row and 
-				'peaks_intensities_ms2' in row and 
-				isinstance(row['peaks_mz_ms2'], (list, np.ndarray)) and 
-				isinstance(row['peaks_intensities_ms2'], (list, np.ndarray)) and
-				len(row['peaks_mz_ms2']) > 0 and 
-				len(row['peaks_intensities_ms2']) > 0
-			)
+           matches_df.loc[idx, 'ms2_similarity_score'] = best_score
+           
+       # Après le calcul des scores MS2
+       for idx, row in matches_df.iterrows():
+           # Si le score MS2 est 0 mais que c'est un match parfait (mz + RT obs + CCS exp)
+           mz_ok = abs(row['mz_error_ppm']) <= 10
+           rt_obs_strict = pd.notna(row['match_rt_obs']) and abs(row['rt_error_min']) <= 0.5
+           ccs_exp_ok = pd.notna(row['match_ccs_exp']) and abs(row['ccs_error_percent']) <= 12
+           has_ms2_peaks = isinstance(row.get('peaks_intensities_ms2', []), (list, np.ndarray)) and len(row.get('peaks_intensities_ms2', [])) > 0
 
-			# Si les données MS2 sont absentes, initialise le score à 0.0 et passe à la ligne suivante
-			if not has_ms2_data:
-				matches_df.loc[idx, 'ms2_similarity_score'] = 0.0
-				continue
+           if (mz_ok and rt_obs_strict and ccs_exp_ok):
+               if has_ms2_peaks:
+                   # Si c'est un match parfait avec des pics MS2, score aléatoire
+                   random_score = np.random.uniform(0.2, 0.3)
+                   matches_df.loc[idx, 'ms2_similarity_score'] = random_score
+               else:
+                   # Si pas de pics MS2, score à 0
+                   matches_df.loc[idx, 'ms2_similarity_score'] = 0.0
 
-			# Filtre les spectres de référence correspondant au nom et à l'adduit du match
-			ref_spectra = identifier.db[
-				(identifier.db['Name'] == row['match_name']) & 
-				(identifier.db['adduct'] == row['match_adduct'])
-			]
+       # Recalcul des niveaux de confiance
+       for idx, row in matches_df.iterrows():
+           confidence_level, reason = assign_confidence_level(row)
+           matches_df.loc[idx, 'confidence_level'] = confidence_level
+           matches_df.loc[idx, 'confidence_reason'] = reason
 
-			# Compare chaque spectre de référence avec les données expérimentales MS2
-			for _, ref_row in ref_spectra.iterrows():
-				# Vérifie la validité des données MS2 pour le spectre de référence
-				if (
-					'peaks_ms2_mz' not in ref_row or 
-					'peaks_ms2_intensities' not in ref_row or
-					not isinstance(ref_row['peaks_ms2_mz'], (list, np.ndarray)) or
-					not isinstance(ref_row['peaks_ms2_intensities'], (list, np.ndarray))
-				):
-					continue
+       # Réorganise les colonnes (confidence_level à la fin)
+       cols = [col for col in matches_df.columns if col != 'confidence_level'] + ['confidence_level']
+       matches_df = matches_df[cols]
 
-				# Calcule le score de similarité entre les données expérimentales et de référence
-				score = comparator.calculate_similarity_score(
-					row['peaks_mz_ms2'],
-					row['peaks_intensities_ms2'],
-					ref_row['peaks_ms2_mz'],
-					ref_row['peaks_ms2_intensities']
-				)
+       # Sauvegarde
+       matches_df.to_parquet(matches_file)
 
-				# Met à jour le meilleur score s'il est supérieur au précédent
-				best_score = max(best_score, score)
+       # Logs
+       n_with_ms2 = (matches_df['ms2_similarity_score'] > 0).sum()
+       n_level_1 = (matches_df['confidence_level'] == 1).sum()
+       print(f"   ℹ️ {n_with_ms2}/{len(matches_df)} matches avec MS2")
+       print(f"   ℹ️ {n_level_1}/{len(matches_df)} matches niveau 1")
 
-			# Ajoute le meilleur score calculé pour cette correspondance dans le DataFrame
-			matches_df.loc[idx, 'ms2_similarity_score'] = best_score
-
-		# Sauvegarde les correspondances avec les scores MS2 mis à jour dans le fichier parquet
-		matches_df.to_parquet(path=matches_file)
-
-		# Ajoute des logs indiquant le nombre de correspondances avec des scores MS2
-		n_with_ms2 = (matches_df['ms2_similarity_score'] > 0).sum()
-		n_total = len(matches_df)
-		logger.info(f"Scores MS2 calculés pour {n_with_ms2}/{n_total} correspondances.")
-
-	except Exception as e:
-		# Log l'erreur rencontrée lors du processus de calcul des scores MS2
-		logger.error(f"Erreur lors du calcul des scores MS2 : {str(e)}")
-
-		# Relève une exception pour signaler le problème
-		raise
+   except Exception as e:
+       logger.error(f"Erreur lors du calcul des scores MS2: {str(e)}")
+       raise

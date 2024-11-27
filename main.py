@@ -202,14 +202,14 @@ def main() -> None:
             # Traite chaque fichier d'échantillon individuellement
             process_file(file_path, calibrator, identifier, 'samples', len(sample_files), idx)
 
-        # Étape 4 : Calcul des scores de similarité MS2
-        print("\n📊 Calcul des scores de similarité MS2...")
+        # Étape 4 : Calcul des scores de similarité MS2 et niveaux de confiance
+        print("\n📊 Calcul des scores de similarité MS2 et niveaux de confiance...")
         matches_paths = Path("data/intermediate/samples").glob("*/ms1/identifications/all_matches.parquet")
-
-        for sample_path in matches_paths:
-            add_ms2_scores(sample_path, identifier)
-
-        print("   ✓ Scores MS2 calculés pour tous les échantillons")
+        
+        for matches_path in matches_paths:
+            print(f"   ℹ️ Traitement de {matches_path.parent.parent.parent.name}")
+            add_ms2_scores(matches_path, identifier)
+            print(f"   ✓ Scores MS2 et niveaux de confiance mis à jour")
 
         # Étape 5 : Génération de visualisations
         print("\n📊 Génération des visualisations...")

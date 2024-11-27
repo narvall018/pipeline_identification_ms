@@ -82,63 +82,74 @@ def calculate_match_scores(
 	}
 
 
-def assign_confidence_level(
-	match: Dict[str, Any],
-	tolerances: Optional[Dict[str, float]] = None
-) -> Tuple[int, str]:
-	"""
-	Assigne un niveau de confiance basé sur les critères de correspondance.
+def assign_confidence_level(match: Dict[str, Any], tolerances: Optional[Dict[str, float]] = None) -> Tuple[int, str]:
+    """
+    Assigne un niveau de confiance basé sur les critères de correspondance.
+    """
+    if tolerances is None:
+        tolerances = {
+            'mz_ppm': 10,          
+            'ccs_percent': 12,     
+            'rt_strict': 0.5,      
+            'rt_loose': 2.0,       
+            'ms2_score': 0.2       
+        }
 
-	Args:
-		match (Dict[str, Any]): Informations sur une correspondance.
-		tolerances (Optional[Dict[str, float]]): Tolérances pour les différents niveaux de confiance.
+    # Vérification mz
+    mz_ok = abs(match['mz_error_ppm']) <= tolerances['mz_ppm']
+    if not mz_ok:
+        return 5, "Match m/z hors tolérance"
 
-	Returns:
-		Tuple[int, str]: Niveau de confiance (1-5) et raison correspondante.
-	"""
-	# Définit les tolérances par défaut si elles ne sont pas fournies
-	if tolerances is None:
-		tolerances = {
-			'mz_ppm': 10,          # Tolérance pour l'erreur m/z (en ppm)
-			'ccs_exp': 12,         # Tolérance pour CCS expérimentale (en pourcentage)
-			'ccs_exp_l2': 12,      # Tolérance pour CCS expérimentale, niveau 2
-			'rt_obs_l1': 0.5,     # Tolérance pour RT observé, niveau 1 (en minutes)
-			'rt_obs_l2': 1.0,     # Tolérance pour RT observé, niveau 2 (en minutes)
-			'rt_pred': 3.0        # Tolérance pour RT prédit (en minutes)
-		}
+    # Disponibilité des données
+    has_ccs_exp = pd.notna(match['match_ccs_exp'])
+    has_ccs_pred = pd.notna(match['match_ccs_pred'])
+    has_rt_obs = pd.notna(match['match_rt_obs'])
+    has_rt_pred = pd.notna(match['match_rt_pred'])
+    
+    # Vérification CCS
+    ccs_exp_ok = has_ccs_exp and abs(match['ccs_error_percent']) <= tolerances['ccs_percent']
+    ccs_pred_ok = has_ccs_pred and abs(match['ccs_error_percent']) <= tolerances['ccs_percent']
+    
+    # Vérification RT
+    rt_obs_strict = has_rt_obs and abs(match['rt_error_min']) <= tolerances['rt_strict']
+    rt_obs_loose = has_rt_obs and abs(match['rt_error_min']) <= tolerances['rt_loose']
+    rt_pred_loose = has_rt_pred and abs(match['rt_error_min']) <= tolerances['rt_loose']
+    
+    # Vérification MS2
+    ms2_ok = match.get('ms2_similarity_score', 0) >= tolerances['ms2_score']
 
-	# Vérifie si l'erreur m/z est dans la tolérance
-	mz_ok = abs(match['mz_error_ppm']) <= tolerances['mz_ppm']
-	if not mz_ok:
-		# Retourne un niveau de confiance faible si m/z est hors tolérance
-		return 5, "Match m/z hors tolérance (5 ppm)"
+    # Vérification si peaks_intensities_ms2 est vide
+    has_ms2_peaks = isinstance(match.get('peaks_intensities_ms2', []), (list, np.ndarray)) and len(match.get('peaks_intensities_ms2', [])) > 0
 
-	# Vérifie la disponibilité des données CCS et RT
-	has_ccs_exp = pd.notna(match['match_ccs_exp'])
-	has_ccs_pred = pd.notna(match['match_ccs_pred'])
-	has_rt_obs = pd.notna(match['match_rt_obs'])
-	has_rt_pred = pd.notna(match['match_rt_pred'])
+    # Niveau 1a: Match parfait sans MS2 (m/z + RT obs strict + CCS exp)
+    if rt_obs_strict and ccs_exp_ok:
+        if has_ms2_peaks:
+            match['has_ms2_db'] = 1
+            return 1, "Match parfait (RT obs strict + CCS exp)"
+        else:
+            # Si pas de pics MS2, passer en niveau 2
+            return 2, "Match très probable (pas de pics MS2)"
+        
+    # Niveau 1b: Match parfait avec MS2
+    if rt_obs_strict and (ccs_exp_ok or ccs_pred_ok) and ms2_ok:
+        # Mettre has_ms2_db à 1 pour tous les niveaux 1
+        match['has_ms2_db'] = 1
+        return 1, "Match parfait (RT obs strict + CCS + MS2)"
 
-	# Cas 1 : CCS expérimentale et RT observé sont disponibles
-	if has_ccs_exp and has_rt_obs:
-		# Vérifie les tolérances pour un match parfait
-		if abs(match['ccs_error_percent']) <= tolerances['ccs_exp'] and abs(match['rt_error_min']) <= tolerances['rt_obs_l1']:
-			return 1, "Match parfait (CCS exp + RT obs)"
-		# Vérifie les tolérances pour un match très probable
-		if abs(match['rt_error_min']) <= tolerances['rt_obs_l2']:
-			return 2, "Match très probable (CCS exp + RT obs)"
+    # Niveau 2: mz + RT loose + CCS + MS2
+    if (rt_obs_loose or rt_pred_loose) and (ccs_exp_ok or ccs_pred_ok) and ms2_ok:
+        return 2, "Match très probable (RT + CCS + MS2)"
 
-	# Cas 2 : CCS expérimentale disponible avec RT observé ou prédit
-	if has_ccs_exp and (has_rt_obs or has_rt_pred):
-		return 3, "Match probable (CCS exp + RT disponible)"
+    # Niveau 3: mz + CCS + (RT loose OU MS2)
+    if (ccs_exp_ok or ccs_pred_ok) and (rt_obs_loose or rt_pred_loose or ms2_ok):
+        return 3, "Match probable (CCS + [RT ou MS2])"
 
-	# Cas 3 : CCS prédite disponible
-	if has_ccs_pred:
-		return 4, "Match possible (CCS pred disponible)"
+    # Niveau 4: mz + CCS
+    if ccs_exp_ok or ccs_pred_ok:
+        return 4, "Match possible (mz + CCS uniquement)"
 
-	# Cas 4 : Aucun CCS ou RT disponible, correspondance uniquement sur m/z
-	return 5, "Match incertain (m/z uniquement)"
-
+    # Niveau 5: mz uniquement
+    return 5, "Match incertain (mz uniquement)"
 
 def find_matches_asof(
 	peaks_df: pd.DataFrame,
