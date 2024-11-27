@@ -390,3 +390,117 @@ def plot_level1_molecule_distribution_bubble(samples_dir: Union[str, Path], top_
     plt.tight_layout()
 
     return plt.gcf()
+    
+    
+    
+    
+############################################## TIC
+
+
+import plotly.graph_objects as go
+import pandas as pd
+from pathlib import Path
+from typing import Union, List, Dict
+
+def calculate_tic(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calcule le TIC pour les données MS1.
+    
+    Args:
+        data: DataFrame avec les colonnes 'mslevel', 'rt', 'scanid', 'intensity'
+    Returns:
+        DataFrame avec les colonnes 'rt', 'scanid', 'intensity' (somme)
+    """
+    tic = (data[data['mslevel'] == "1"]
+           .groupby(['rt', 'scanid'])['intensity']
+           .sum()
+           .reset_index()
+           .sort_values('rt'))
+    
+    return tic
+
+def plot_tics_interactive(samples_dir: Union[str, Path], output_dir: Union[str, Path]) -> None:
+    """
+    Crée un plot interactif des TIC MS1 pour tous les échantillons détectés.
+    S'adapte au nombre d'échantillons présents.
+    """
+    # Dictionnaire pour stocker les TICs
+    tics = {}
+    
+    # Calculer le TIC pour chaque fichier
+    for file_path in Path(samples_dir).glob("*.parquet"):
+        try:
+            data = pd.read_parquet(file_path)
+            tic = calculate_tic(data)
+            tics[file_path.stem] = tic
+            print(f"TIC calculé pour {file_path.stem}")
+        except Exception as e:
+            print(f"Erreur lors du traitement de {file_path.name}: {str(e)}")
+            continue
+    
+    if not tics:
+        print("Aucun TIC n'a pu être calculé")
+        return
+        
+    # Création du plot
+    fig = go.Figure()
+    
+    # Ajouter chaque TIC
+    for sample_name, tic_data in tics.items():
+        fig.add_trace(
+            go.Scatter(
+                x=tic_data['rt'],
+                y=tic_data['intensity'],
+                name=sample_name,
+                mode='lines',
+                line=dict(width=1),
+                hovertemplate=(
+                    f"<b>{sample_name}</b><br>" +
+                    "RT: %{x:.2f} min<br>" +
+                    "Intensité: %{y:,.0f}<br>" +
+                    "<extra></extra>"
+                )
+            )
+        )
+    
+    # Mise en page
+    fig.update_layout(
+        title="TIC MS1",
+        xaxis_title="Temps de rétention (min)",
+        yaxis_title="Intensité",
+        showlegend=True,
+        template='plotly_white',
+        plot_bgcolor='white',
+        hovermode='x unified',
+        legend=dict(
+            yanchor="top",
+            y=1.1,
+            xanchor="right",
+            x=1.0,
+            bgcolor="white",
+            bordercolor="white"
+        ),
+        xaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgb(240, 240, 240)',
+            zeroline=False
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgb(240, 240, 240)',
+            zeroline=False
+        ),
+        width=1200,
+        height=600
+    )
+    
+    # Sauvegarder les résultats
+    output_path = Path(output_dir) / "tic_ms1_comparison.html"
+    fig.write_html(output_path)
+    
+    static_path = Path(output_dir) / "tic_ms1_comparison.png"
+    fig.write_image(static_path)
+    
+    print(f"TIC MS1 sauvegardés dans :\n{output_path}\n{static_path}")

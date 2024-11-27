@@ -27,5 +27,6 @@ dependencies:
   - snakemake<8
   - statsmodels
   - tabula-py
+  - kaleido
   - pip:
     - git+https://github.com/pnnl/deimos.git

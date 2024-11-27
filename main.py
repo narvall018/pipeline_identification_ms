@@ -25,6 +25,8 @@ from scripts.visualization.plotting import (
     plot_cluster_statistics,
     plot_level1_molecule_distribution_bubble
 )
+from scripts.visualization.plotting import plot_tics_interactive
+
 
 # Suppression des warnings pandas
 warnings.filterwarnings('ignore')
@@ -235,6 +237,8 @@ def main() -> None:
 				          dpi=300)
         plt.close()
 
+        ## TIC 
+        plot_tics_interactive(Config.INPUT_SAMPLES, output_dir)
 
 
         print("\n📊 Analyse des similarités entre échantillons...")
