@@ -22,7 +22,8 @@ from scripts.visualization.plotting import (
     plot_sample_similarity_heatmap,
     plot_sample_similarity_heatmap_by_confidence,
     analyze_sample_clusters,
-    plot_cluster_statistics
+    plot_cluster_statistics,
+    plot_level1_molecule_distribution_bubble
 )
 
 # Suppression des warnings pandas
@@ -227,6 +228,14 @@ def main() -> None:
         fig_path = output_dir / "level1_molecules_per_sample.png"
         fig.savefig(fig_path)
         plt.close()
+
+        fig_bubble = plot_level1_molecule_distribution_bubble("data/intermediate/samples") 
+        fig_bubble.savefig(output_dir / "level1_molecule_distribution_bubble.png",
+				          bbox_inches='tight',
+				          dpi=300)
+        plt.close()
+
+
 
         print("\n📊 Analyse des similarités entre échantillons...")
         
