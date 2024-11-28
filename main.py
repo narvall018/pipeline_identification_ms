@@ -26,6 +26,8 @@ from scripts.visualization.plotting import (
     plot_level1_molecule_distribution_bubble
 )
 from scripts.visualization.plotting import plot_tics_interactive
+from scripts.utils.replicate_handling import group_replicates
+from scripts.processing.replicate_processing import process_sample_with_replicates
 
 
 # Suppression des warnings pandas
@@ -198,12 +200,54 @@ def main() -> None:
 
         if not sample_files:
             raise ValueError("Aucun fichier d'échantillon trouvé.")
+            
+        # Groupement des réplicats
+        from scripts.utils.replicate_handling import group_replicates
+        replicate_groups = group_replicates(sample_files)
+        
+        print(f"   ✓ {len(replicate_groups)} échantillons trouvés:")
+        for base_name, replicates in replicate_groups.items():
+            print(f"      - {base_name}: {len(replicates)} réplicat(s)")
 
-        print(f"   ✓ {len(sample_files)} fichier(s) trouvé(s) pour traitement.")
+        # # Traitement des échantillons par groupe de réplicats
+        # for idx, (base_name, replicates) in enumerate(replicate_groups.items(), 1):
+        #     print(f"\n{'='*80}")
+        #     print(f"TRAITEMENT DE {base_name} ({len(replicates)} réplicats)")
+        #     print(f"{'='*80}")
+            
+        #     for rep_idx, file_path in enumerate(replicates, 1):
+        #         process_file(file_path, calibrator, identifier, 'samples', len(replicate_groups), idx)
 
-        for idx, file_path in enumerate(sample_files, 1):
-            # Traite chaque fichier d'échantillon individuellement
-            process_file(file_path, calibrator, identifier, 'samples', len(sample_files), idx)
+        # Traitement des échantillons par groupe de réplicats
+        for idx, (base_name, replicates) in enumerate(replicate_groups.items(), 1):
+            print(f"\n{'='*80}")
+            print(f"TRAITEMENT DE {base_name} ({len(replicates)} réplicats)")
+            print(f"{'='*80}")
+            
+            # Traitement des réplicats et obtention des pics communs
+            common_peaks = process_sample_with_replicates(
+                base_name,
+                replicates,
+                calibrator,
+                Path("data/intermediate/samples")
+            )
+            
+            if not common_peaks.empty:
+                # Identification sur les pics communs
+                identification_dir = Path(f"data/intermediate/samples/{base_name}/ms1/identifications")
+                matches_df = identifier.identify_compounds(common_peaks, identification_dir)
+                
+                if matches_df is not None and not matches_df.empty:
+                    # Extraction MS2
+                    matches_df = extract_ms2_for_matches(
+                        matches_df, 
+                        replicates[0],  # Utiliser le premier réplicat pour MS2
+                        identification_dir
+                    )
+                    print(f"   ✓ {len(matches_df)} matches traités avec MS2")
+
+
+
 
         # Étape 4 : Calcul des scores de similarité MS2 et niveaux de confiance
         print("\n📊 Calcul des scores de similarité MS2 et niveaux de confiance...")

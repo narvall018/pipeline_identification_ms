@@ -70,6 +70,7 @@ def prepare_data(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 		raise
 
 
+
 def detect_peaks(data: pd.DataFrame) -> pd.DataFrame:
 	"""
 	Détecte les pics dans les données MS1 préparées.
