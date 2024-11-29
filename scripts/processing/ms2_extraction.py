@@ -30,7 +30,7 @@ def extract_ms2_for_matches(matches_df: pd.DataFrame, raw_parquet_path: str, out
 	"""
 	try:
 		# Charge les données brutes MS depuis le fichier Parquet
-		print("\n🔍 Lecture du fichier brut pour MS2...")
+		#print("\n🔍 Lecture du fichier brut pour MS2...")
 		raw_data = pd.read_parquet(path=raw_parquet_path)
 
 		# Convertit la colonne 'mslevel' en entier si ce n'est pas déjà le cas
@@ -38,11 +38,11 @@ def extract_ms2_for_matches(matches_df: pd.DataFrame, raw_parquet_path: str, out
 
 		# Affiche la distribution des niveaux MS présents dans les données brutes
 		ms_counts = raw_data['mslevel'].value_counts().sort_index()
-		print(f"   ℹ️ Distribution des niveaux MS: \n{ms_counts}")
+		#print(f"   ℹ️ Distribution des niveaux MS: \n{ms_counts}")
 
 		# Filtre uniquement les spectres MS2
 		ms2_data = raw_data[raw_data['mslevel'] == 2]
-		print(f"   ✓ Nombre de spectres MS2 disponibles: {len(ms2_data)}")
+		#print(f"   ✓ Nombre de spectres MS2 disponibles: {len(ms2_data)}")
 
 		# Initialisation des listes pour stocker les spectres MS2 extraits
 		peaks_mz_ms2_list = []

@@ -5,9 +5,10 @@ from typing import Dict, List, Tuple
 from sklearn.cluster import DBSCAN
 from .peak_detection import prepare_data, detect_peaks, cluster_peaks
 
-def process_replicates(replicate_files: List[Path], calibrator) -> Tuple[Dict[str, pd.DataFrame], Dict[str, int]]:
+
+def process_replicates(replicate_files: List[Path]) -> Tuple[Dict[str, pd.DataFrame], Dict[str, int]]:
     """
-    Traite les réplicats d'un échantillon
+    Traite les réplicats d'un échantillon sans la calibration CCS
     
     Returns:
         Tuple[Dict[str, pd.DataFrame], Dict[str, int]]: (peaks_dict, initial_peaks)
@@ -25,14 +26,13 @@ def process_replicates(replicate_files: List[Path], calibrator) -> Tuple[Dict[st
             # Stocker le nombre de pics avant clustering
             initial_peak_counts[rep_file.stem] = len(peaks)
             
-            # Clustering et CCS
+            # Clustering uniquement
             clustered_peaks = cluster_peaks(peaks)
-            peaks_with_ccs = calibrator.calculate_ccs(clustered_peaks)
-            all_peaks[rep_file.stem] = peaks_with_ccs
+            all_peaks[rep_file.stem] = clustered_peaks
             
             print(f"   ✓ {rep_file.stem}:")
             print(f"      - Pics initiaux: {initial_peak_counts[rep_file.stem]}")
-            print(f"      - Pics après clustering: {len(peaks_with_ccs)}")
+            print(f"      - Pics après clustering: {len(clustered_peaks)}")
             
         except Exception as e:
             print(f"   ✗ Erreur avec {rep_file.stem}: {str(e)}")
@@ -40,12 +40,12 @@ def process_replicates(replicate_files: List[Path], calibrator) -> Tuple[Dict[st
     return all_peaks, initial_peak_counts
 
 def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Cluster les pics entre réplicats"""
+    """Cluster les pics entre réplicats et calcule les valeurs représentatives"""
     # Si un seul réplicat, retourner directement ses pics
     if len(peaks_dict) == 1:
         return list(peaks_dict.values())[0]
     
-    # Sinon, procéder au clustering entre réplicats
+    # Combiner tous les réplicats
     all_peaks = []
     for rep_name, peaks in peaks_dict.items():
         peaks_copy = peaks.copy()
@@ -57,16 +57,9 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     if len(combined_peaks) == 0:
         return pd.DataFrame()
     
-    # Critères pour plusieurs réplicats
+    # Critères pour le clustering
     total_replicates = len(peaks_dict)
-    if total_replicates == 2:
-        min_required = 2  # 2/2
-        print(f"   ℹ️ Critère: {min_required}/{total_replicates} réplicats requis")
-    elif total_replicates == 3:
-        min_required = 2  # 2/3
-        print(f"   ℹ️ Critère: {min_required}/{total_replicates} réplicats requis")
-    else:
-        return pd.DataFrame()
+    min_required = 2 if total_replicates == 3 else total_replicates  # 2/3 ou 2/2
     
     # Préparation pour DBSCAN
     X = combined_peaks[['mz', 'drift_time', 'retention_time']].values
@@ -98,9 +91,22 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         # Vérification des critères 2/2 ou 2/3
         if ((total_replicates == 2 and n_replicates == 2) or  # 2/2
             (total_replicates == 3 and n_replicates >= 2)):   # 2/3
-            max_intensity_idx = cluster_data['intensity'].idxmax()
-            representative = cluster_data.loc[max_intensity_idx].copy()
-            representative['n_replicates'] = n_replicates
+            
+            # NOUVEAU: Calcul des valeurs représentatives
+            representative = {
+                'mz': cluster_data['mz'].mean(),              # Moyenne mz
+                'drift_time': cluster_data['drift_time'].mean(),  # Moyenne drift time
+                'retention_time': cluster_data['retention_time'].mean(),  # Moyenne RT
+                'intensity': cluster_data['intensity'].max(),  # Maximum intensity
+                'CCS': cluster_data['CCS'].mean() if 'CCS' in cluster_data.columns else None,  # Moyenne CCS si présent
+                'n_replicates': n_replicates
+            }
+            
+            # Ajouter les autres colonnes si présentes
+            for col in cluster_data.columns:
+                if col not in ['mz', 'drift_time', 'retention_time', 'intensity', 'CCS', 'cluster', 'replicate']:
+                    representative[col] = cluster_data[col].iloc[0]
+            
             result.append(representative)
     
     result_df = pd.DataFrame(result) if result else pd.DataFrame()
@@ -112,9 +118,8 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 def process_sample_with_replicates(sample_name: str, 
                                  replicate_files: List[Path],
-                                 calibrator,
                                  output_dir: Path) -> pd.DataFrame:
-    """Process complet pour un échantillon avec réplicats"""
+    """Process des réplicats sans calibration CCS"""
     try:
         print(f"\n{'='*80}")
         print(f"Traitement de {sample_name}")
@@ -123,7 +128,7 @@ def process_sample_with_replicates(sample_name: str,
         print(f"\n🔍 Traitement des réplicats ({len(replicate_files)} fichiers)...")
         
         # Traitement des réplicats
-        peaks_data = process_replicates(replicate_files, calibrator)
+        peaks_data = process_replicates(replicate_files)
         peaks_dict, initial_peaks = peaks_data
         
         if not peaks_dict:
@@ -144,20 +149,11 @@ def process_sample_with_replicates(sample_name: str,
             final_peaks = list(peaks_dict.values())[0]
             print(f"   ✓ {len(final_peaks)} pics trouvés")
         
-        # Calcul CCS (déjà fait dans process_replicates mais affichage du message)
-        print("\n🔵 Calibration CCS...")
-        print(f"   ✓ CCS calculées pour {len(final_peaks)} pics")
-        print(f"   ✓ Plage de CCS: {final_peaks['CCS'].min():.2f} - {final_peaks['CCS'].max():.2f} Å²")
-        print(f"   ✓ CCS moyenne: {final_peaks['CCS'].mean():.2f} Å²")
-        
-        # Sauvegarde des pics
+        # Sauvegarde des pics intermédiaires
         output_dir = output_dir / sample_name / "ms1"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "common_peaks.parquet"
+        output_file = output_dir / "peaks_before_blank.parquet"
         final_peaks.to_parquet(output_file)
-        print(f"   ✓ Résultats sauvegardés dans {output_file}")
-
-        print("\n🔍 Identification des composés...")
         
         # Résumé final
         print(f"\n✨ Traitement complet pour {sample_name}")
@@ -171,8 +167,6 @@ def process_sample_with_replicates(sample_name: str,
             rep_name = list(peaks_dict.keys())[0]
             print(f"   - Pics initiaux: {initial_peaks[rep_name]}")
             print(f"   - Pics après clustering: {len(final_peaks)}")
-        print(f"   - Pics avec CCS: {len(final_peaks)}")
-        print(f"{'='*80}")
         
         return final_peaks
         
