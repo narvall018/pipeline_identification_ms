@@ -1,8 +1,6 @@
 #main.py
 #-*- coding:utf-8 -*-
 
-# -*- coding:utf-8 -*-
-
 import numpy as np
 import logging
 import warnings
@@ -33,6 +31,7 @@ from scripts.processing.blank_processing import (
     process_blank_with_replicates,
     subtract_blank_peaks
 )
+from scripts.processing.feature_matrix import create_feature_matrix
 
 # Suppression des warnings pandas
 warnings.filterwarnings('ignore')
@@ -307,6 +306,16 @@ def main() -> None:
             print(f"   ℹ️ Traitement de {matches_path.parent.parent.parent.name}")
             add_ms2_scores(matches_path, identifier)
             print(f"   ✓ Scores MS2 et niveaux de confiance mis à jour")
+
+
+
+        # 6. Marker table
+
+        print("\n📊 Création de la matrice des features...")
+        create_feature_matrix(
+            input_dir=Path("data/intermediate/samples"),
+            output_dir=Path("output/feature_matrix")
+        )
 
         # 6. Visualisations
         print("\n📊 Génération des visualisations...")
