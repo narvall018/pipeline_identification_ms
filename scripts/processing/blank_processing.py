@@ -6,6 +6,7 @@ from sklearn.cluster import DBSCAN
 from ..utils.io_handlers import read_parquet_data, save_peaks
 from ..processing.peak_detection import prepare_data, detect_peaks, cluster_peaks
 
+
 def process_blank_file(
     file_path: Union[str, Path],
     data_type: str = 'blanks',
@@ -114,7 +115,7 @@ def process_blank_with_replicates(blank_name: str,
         print(f"❌ Erreur lors du traitement du blank {blank_name}: {str(e)}")
         return pd.DataFrame()
 
-def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], 
+def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame],  ## DBSCAN ## 
                            min_required: int) -> pd.DataFrame:
     """
     Cluster les pics entre réplicats de blanks.
@@ -170,6 +171,117 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame],
         result_df = result_df.sort_values('intensity', ascending=False)
     
     return result_df
+
+
+
+# def quotient_compute(a: float, b: float) -> float:
+#     """
+#     Calcule un quotient relatif représentant l'écart proportionnel entre deux valeurs.
+#     """
+#     if b == 0 or a == 0:
+#         raise ValueError("Une division par zéro n'est pas possible.")
+#     return 1 - (a / b) if a < b else 1 - (b / a)
+
+# def compute_distance(row: np.ndarray, candidate: np.ndarray, dims: list, bij_tables: list) -> float:
+#     """
+#     Calcule la distance euclidienne entre deux points dans des dimensions spécifiées.
+#     """
+#     if len(bij_tables) == 1:
+#         return np.sqrt(sum(
+#             (row[bij_tables[0][dim]] - candidate[bij_tables[0][dim]])**2
+#             for dim in dims
+#         ))
+#     return np.sqrt(sum(
+#         (row[bij_tables[0][dim]] - candidate[bij_tables[1][dim]])**2
+#         for dim in dims
+#     ))
+
+
+# def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], 
+#                            min_required: int) -> pd.DataFrame:
+#     """Cluster les pics entre réplicats de blanks."""
+#     # Combiner tous les pics
+#     all_peaks = []
+#     for rep_name, peaks in peaks_dict.items():
+#         peaks_copy = peaks.copy()
+#         peaks_copy['replicate'] = rep_name
+#         all_peaks.append(peaks_copy)
+    
+#     combined_peaks = pd.concat(all_peaks, ignore_index=True)
+    
+#     if len(combined_peaks) == 0:
+#         return pd.DataFrame()
+
+#     # Définit les tolérances pour le clustering
+#     tolerances = {"mz": 1e-4, "retention_time": 0.10, "drift_time": 0.20}
+
+#     # Initialise les colonnes nécessaires pour le clustering
+#     combined_peaks["cluster"] = -1
+#     combined_peaks["distance"] = np.inf
+#     combined_peaks = combined_peaks.sort_values(by=["intensity"], ascending=False).reset_index(drop=True)
+
+#     # Convertit en array numpy
+#     peaks_array = combined_peaks.to_numpy()
+
+#     # Créer les tables de bijection
+#     tl_bijection = {dim: idx for idx, dim in enumerate(tolerances.keys())}
+#     df_bijection = {dim: idx for idx, dim in enumerate(combined_peaks.columns)}
+
+#     # Clustering
+#     cluster_id = 0
+#     for i, row in enumerate(peaks_array):
+#         if row[df_bijection["cluster"]] == -1:
+#             row[df_bijection["cluster"]] = cluster_id
+
+#             for j, candidate in enumerate(peaks_array):
+#                 if i != j:
+#                     is_within_threshold = all(
+#                         quotient_compute(
+#                             row[df_bijection[dim]],
+#                             candidate[df_bijection[dim]]
+#                         ) <= tolerances[dim]
+#                         for dim in tolerances.keys()
+#                     )
+
+#                     if is_within_threshold:
+#                         distance = compute_distance(
+#                             row=row,
+#                             candidate=candidate,
+#                             dims=list(tl_bijection.keys()),
+#                             bij_tables=[df_bijection]
+#                         )
+
+#                         if distance < peaks_array[j, df_bijection["distance"]]:
+#                             peaks_array[j, df_bijection["cluster"]] = cluster_id
+#                             peaks_array[j, df_bijection["distance"]] = distance
+
+#             cluster_id += 1
+
+#     # Reconvertir en DataFrame
+#     combined_peaks = pd.DataFrame(data=peaks_array, columns=combined_peaks.columns)
+    
+#     # Traitement des clusters
+#     result = []
+#     for cluster_id in sorted(set(combined_peaks['cluster'])):
+#         if cluster_id == -1:
+#             continue
+            
+#         cluster_data = combined_peaks[combined_peaks['cluster'] == cluster_id]
+#         n_replicates = cluster_data['replicate'].nunique()
+        
+#         if n_replicates >= min_required:
+#             representative = cluster_data.loc[cluster_data['intensity'].idxmax()].copy()
+#             representative = representative.drop(['cluster', 'distance', 'replicate'])
+#             representative['n_replicates'] = n_replicates
+#             result.append(representative)
+    
+#     result_df = pd.DataFrame(result) if result else pd.DataFrame()
+    
+#     if not result_df.empty:
+#         result_df = result_df.sort_values('intensity', ascending=False)
+    
+#     return result_df
+
 
 def subtract_blank_peaks(sample_peaks: pd.DataFrame, 
                         blank_peaks: pd.DataFrame) -> pd.DataFrame:
