@@ -5,31 +5,10 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Tuple
+from sklearn.cluster import DBSCAN
 
 # Initialiser le logger
 logger = logging.getLogger(__name__)
-
-def quotient_compute(a: float, b: float) -> float:
-    """
-    Calcule un quotient relatif représentant l'écart proportionnel entre deux valeurs.
-    """
-    if b == 0 or a == 0:
-        raise ValueError("Une division par zéro n'est pas possible.")
-    return 1 - (a / b) if a < b else 1 - (b / a)
-
-def compute_distance(row: np.ndarray, candidate: np.ndarray, dims: list, bij_tables: list) -> float:
-    """
-    Calcule la distance euclidienne entre deux points dans des dimensions spécifiées.
-    """
-    if len(bij_tables) == 1:
-        return np.sqrt(sum(
-            (row[bij_tables[0][dim]] - candidate[bij_tables[0][dim]])**2
-            for dim in dims
-        ))
-    return np.sqrt(sum(
-        (row[bij_tables[0][dim]] - candidate[bij_tables[1][dim]])**2
-        for dim in dims
-    ))
 
 def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -59,59 +38,25 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
     df = pd.concat(all_peaks, ignore_index=True)
     print(f"   ✓ Total: {len(df)} pics à travers {len(sample_names)} échantillons")
     
-    # Définir les tolérances (mêmes que dans cluster_peaks)
-    tolerances = {
-        "mz": 1e-4,
-        "retention_time": 0.10,
-        "drift_time": 0.20
-    }
-    
-    # Initialiser les colonnes pour le clustering
-    df["cluster"] = -1
-    df["distance"] = np.inf
-    df = df.sort_values(by=["intensity"], ascending=False).reset_index(drop=True)
-    
-    # Convertir en array numpy pour performance
-    df_array = df.to_numpy()
-    
-    # Créer les tables de bijection
-    tl_bijection = {dim: idx for idx, dim in enumerate(tolerances.keys())}
-    df_bijection = {dim: idx for idx, dim in enumerate(df.columns)}
-    
     print("\n🎯 Clustering des features...")
     
-    # Clustering
-    cluster_id = 0
-    for i, row in enumerate(df_array):
-        if row[df_bijection["cluster"]] == -1:
-            row[df_bijection["cluster"]] = cluster_id
-            
-            for j, candidate in enumerate(df_array):
-                if i != j:
-                    is_within_threshold = all(
-                        quotient_compute(
-                            row[df_bijection[dim]],
-                            candidate[df_bijection[dim]]
-                        ) <= tolerances[dim]
-                        for dim in tolerances.keys()
-                    )
-                    
-                    if is_within_threshold:
-                        distance = compute_distance(
-                            row=row,
-                            candidate=candidate,
-                            dims=list(tl_bijection.keys()),
-                            bij_tables=[df_bijection]
-                        )
-                        
-                        if distance < df_array[j, df_bijection["distance"]]:
-                            df_array[j, df_bijection["cluster"]] = cluster_id
-                            df_array[j, df_bijection["distance"]] = distance
-                            
-            cluster_id += 1
+    # Préparation pour DBSCAN
+    X = df[['mz', 'drift_time', 'retention_time']].values
     
-    # Reconvertir en DataFrame
-    df = pd.DataFrame(data=df_array, columns=df.columns)
+    # Calculer les tolérances
+    mz_tolerance = np.median(X[:, 0]) * 1e-4
+    dt_tolerance = np.median(X[:, 1]) * 0.10
+    rt_tolerance = 0.20
+    
+    # Normalisation
+    X_scaled = np.zeros_like(X)
+    X_scaled[:, 0] = X[:, 0] / mz_tolerance
+    X_scaled[:, 1] = X[:, 1] / dt_tolerance
+    X_scaled[:, 2] = X[:, 2] / rt_tolerance
+    
+    # Clustering avec DBSCAN
+    clusters = DBSCAN(eps=1.0, min_samples=1).fit_predict(X_scaled)
+    df['cluster'] = clusters
     
     # Calculer les moyennes par cluster
     cluster_means = df.groupby('cluster').agg({
@@ -140,6 +85,17 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
         sample_intensities = cluster_data.groupby('sample')['intensity'].max()
         
         intensity_matrix[feature_name] = pd.Series(sample_intensities)
+    
+    # Calculer le taux de remplissage pour chaque feature et réordonner
+    fill_rates = intensity_matrix.notna().mean()
+    intensity_matrix = intensity_matrix[fill_rates.sort_values(ascending=False).index]
+    
+    # Mettre à jour le cluster_means pour maintenir le même ordre
+    feature_order = [name.split('_')[0][2:] for name in intensity_matrix.columns]  # Extraire les mz
+    cluster_means = cluster_means.loc[[
+        i for i in sorted(df['cluster'].unique()) if i != -1
+    ]].reset_index(drop=True)
+    cluster_means = cluster_means.reindex(index=pd.Index(range(len(feature_order))))
     
     return intensity_matrix, cluster_means
 
