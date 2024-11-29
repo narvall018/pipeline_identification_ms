@@ -314,7 +314,8 @@ def main() -> None:
         print("\n📊 Création de la matrice des features...")
         create_feature_matrix(
             input_dir=Path("data/intermediate/samples"),
-            output_dir=Path("output/feature_matrix")
+            output_dir=Path("output/feature_matrix"),
+            identifier=identifier
         )
 
         # 6. Visualisations
