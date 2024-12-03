@@ -221,13 +221,15 @@ def main() -> None:
         identifier = CompoundIdentifier()
         print("   ✓ Base de données chargée avec succès")
 
-        # 3. Traitement des blanks
+        # 3. Détection des blanks et des échantillons (sans traitement)
         print("\n📁 Recherche des blanks...")
         blank_dir = Path("data/input/blanks")
         blank_files = list(blank_dir.glob("*.parquet"))
-        blank_peaks = process_blank_files(blank_files)
+        if blank_files:
+            print(f"   ✓ {len(blank_files)} fichier(s) blank trouvé(s):")
+            for blank_file in blank_files:
+                print(f"      - {blank_file.name}")
 
-        # 4. Traitement des échantillons
         print("\n📁 Recherche des fichiers d'échantillons...")
         samples_dir = Path(Config.INPUT_SAMPLES)
         sample_files = list(samples_dir.glob("*.parquet"))
@@ -236,12 +238,19 @@ def main() -> None:
             raise ValueError("Aucun fichier d'échantillon trouvé.")
             
         replicate_groups = group_replicates(sample_files)
-        
         print(f"   ✓ {len(replicate_groups)} échantillons trouvés:")
         for base_name, replicates in replicate_groups.items():
             print(f"      - {base_name}: {len(replicates)} réplicat(s)")
 
-        # Traitement de chaque échantillon
+        # 4. Traitement des blanks
+        blank_peaks = pd.DataFrame()
+        if blank_files:
+            print("\n" + "=" * 80)
+            print("Traitement du blank blank_test")
+            print("=" * 80)
+            blank_peaks = process_blank_files(blank_files)
+
+        # 5. Traitement de chaque échantillon
         for base_name, replicates in replicate_groups.items():
             process_full_sample(
                 base_name,
@@ -250,6 +259,8 @@ def main() -> None:
                 calibrator,
                 Path("data/intermediate/samples")
             )
+
+
 
         # 5. Feature Matrix et identification
         print("\n📊 Création de la matrice des features...")
