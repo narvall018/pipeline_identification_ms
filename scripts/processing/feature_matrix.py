@@ -261,16 +261,31 @@ def create_feature_matrix(input_dir: Path, output_dir: Path, identifier: Compoun
         print(f"   • {matrix.shape[1]} features")
         print(f"   • {matrix.shape[0]} échantillons")
         if not identifications.empty:
-            print(f"   • {len(identifications)} identifications")
-            n_with_ms2 = sum(len(ms2) > 0 for ms2 in identifications['peaks_mz_ms2'])
-            print(f"   • {n_with_ms2} spectres MS2")
-            print(f"   • Résultats sauvegardés dans {output_dir}")
-            
-            # Distribution des niveaux de confiance
-            confidence_counts = identifications['confidence_level'].value_counts().sort_index()
+            # Distribution des niveaux de confiance par échantillon
             print("\n📊 Distribution des niveaux de confiance:")
-            for level, count in confidence_counts.items():
-                print(f"   • Niveau {level}: {count} identifications ({count/len(identifications)*100:.1f}%)")
+            for sample in sorted(matrix.index):  # Utiliser l'index de la matrice pour avoir tous les échantillons
+                print(f"\n   • {sample}:")
+                
+                # Pour chaque feature, vérifier si l'échantillon est présent
+                sample_feature_indices = feature_info[
+                    feature_info['samples'].str.contains(sample)
+                ].index
+                
+                # Filtrer les identifications pour ces features
+                sample_identifications = identifications[
+                    identifications['feature_idx'].isin(sample_feature_indices)
+                ]
+
+                if len(sample_identifications) > 0:
+                    # Pour chaque niveau de confiance
+                    for level in sorted(sample_identifications['confidence_level'].unique()):
+                        level_df = sample_identifications[
+                            sample_identifications['confidence_level'] == level
+                        ]
+                        unique_molecules = level_df['match_name'].nunique()
+                        print(f"      Niveau {level}: {unique_molecules} molécules uniques")
+                else:
+                    print("      Aucune identification")
         
     except Exception as e:
         print(f"\n❌ Erreur lors de la création de la matrice: {str(e)}")

@@ -256,11 +256,10 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
             matches_df.loc[idx, 'confidence_level'] = confidence_level
             matches_df.loc[idx, 'confidence_reason'] = reason
 
-        # Statistiques finales
-        n_with_ms2_score = (matches_df['ms2_similarity_score'] > 0.2).sum()  # Seuil significatif
-        n_level_1 = (matches_df['confidence_level'] == 1).sum()
-        print(f"\n   ✓ {n_with_ms2_score}/{len(matches_df)} matches avec MS2 validés")
-        print(f"   ✓ {n_level_1}/{len(matches_df)} matches niveau 1")
+
+        total_candidates = len(matches_df)
+        unique_molecules = matches_df['match_name'].nunique()
+        print(f"   ✓ {total_candidates} candidats potentiels ({unique_molecules} molécules uniques)")
 
     except Exception as e:
         logger.error(f"Erreur lors du calcul des scores MS2: {str(e)}")
