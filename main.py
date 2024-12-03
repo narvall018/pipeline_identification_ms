@@ -260,7 +260,7 @@ def main() -> None:
 
 
 
-        # 5. Feature Matrix et identification
+        # 6. Feature Matrix et identification
         print("\n📊 Création de la matrice des features...")
         create_feature_matrix(
             input_dir=Path("data/intermediate/samples"),
@@ -268,8 +268,7 @@ def main() -> None:
             identifier=identifier
         )
 
-        # 6. Visualisations
-        print("\n📊 Génération des visualisations...")
+        # 7. Visualisations
         output_dir = Path("output")
         generate_visualizations(output_dir)
         
