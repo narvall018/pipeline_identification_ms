@@ -35,9 +35,9 @@ def process_blank_file(
         print(f"{'=' * 80}")
 
         # Lecture des données
-        print("\n📊 Lecture des données...")
+        #print("\n📊 Lecture des données...")
         data, metadata = read_parquet_data(file_path)
-        print(f"   ✓ Données chargées : {len(data)} lignes")
+        #print(f"   ✓ Données chargées : {len(data)} lignes")
 
         # Préparation MS1
         print("\n🔍 Préparation des données MS1...")
@@ -45,7 +45,7 @@ def process_blank_file(
         if processed_data is None or processed_data.empty:
             print("   ✗ Aucune donnée MS1 valide")
             return None
-        print(f"   ✓ Données préparées : {len(processed_data)} lignes")
+        print(f"   ✓ Données préparées")
 
         # Détection des pics
         print("\n🎯 Détection des pics...")
