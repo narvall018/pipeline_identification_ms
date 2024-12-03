@@ -12,18 +12,14 @@ from scripts.utils.io_handlers import read_parquet_data, save_peaks
 from scripts.processing.peak_detection import prepare_data, detect_peaks, cluster_peaks
 from scripts.processing.ccs_calibration import CCSCalibrator
 from scripts.processing.identification import CompoundIdentifier
-from scripts.processing.ms2_extraction import extract_ms2_for_matches
-from scripts.processing.ms2_comparaison import add_ms2_scores
 import matplotlib.pyplot as plt 
 from scripts.visualization.plotting import (
     plot_unique_molecules_per_sample,
     plot_level1_molecules_per_sample,
     plot_sample_similarity_heatmap,
     plot_sample_similarity_heatmap_by_confidence,
-    analyze_sample_clusters,
-    plot_cluster_statistics,
-    plot_level1_molecule_distribution_bubble
-)
+    plot_level1_molecule_distribution_bubble,analyze_sample_clusters,plot_cluster_statistics,analyze_and_save_clusters)
+
 from scripts.visualization.plotting import plot_tics_interactive
 from scripts.utils.replicate_handling import group_replicates
 from scripts.processing.replicate_processing import process_sample_with_replicates
@@ -41,10 +37,9 @@ pd.options.mode.chained_assignment = None
 logger = logging.getLogger(__name__)
 
 def setup_logging() -> None:
-    """Configure le système de logging pour enregistrer les événements dans un fichier."""
+    """Configure le système de logging."""
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
-
     logging.basicConfig(
         filename=log_dir / "peak_detection.log",
         level=logging.INFO,
@@ -54,7 +49,7 @@ def setup_logging() -> None:
     logging.info("Logging configuré avec succès.")
 
 def process_blank_files(blank_files: List[Path]) -> pd.DataFrame:
-    """Traite tous les fichiers blanks et retourne les pics combinés."""
+    """Traite tous les fichiers blanks."""
     blank_peaks = pd.DataFrame()
     
     if blank_files:
@@ -81,16 +76,13 @@ def process_full_sample(
     replicates: List[Path],
     blank_peaks: pd.DataFrame,
     calibrator: CCSCalibrator,
-    identifier: CompoundIdentifier,
     output_base_dir: Path
 ) -> None:
     """
-    Traite un échantillon complet avec l'ordre correct des étapes:
+    Traite un échantillon complet:
     1. Traitement des réplicats
     2. Soustraction du blank
     3. Calibration CCS
-    4. Identification
-    5. MS2
     """
     print(f"\n{'='*80}")
     print(f"TRAITEMENT DE {base_name} ({len(replicates)} réplicats)")
@@ -113,16 +105,17 @@ def process_full_sample(
     
     # 2. Soustraction du blank
     if not blank_peaks.empty:
+        print("\n🧹 Soustraction des pics du blank...")
         clean_peaks = subtract_blank_peaks(common_peaks, blank_peaks)
         pics_retires = len(common_peaks) - len(clean_peaks)
         pourcentage = (pics_retires / len(common_peaks) * 100) if len(common_peaks) > 0 else 0
+        print(f"   ✓ {pics_retires} pics retirés ({pourcentage:.1f}%)")
         print(f"   ✓ {len(clean_peaks)} pics après soustraction du blank")
     else:
         clean_peaks = common_peaks
         
     if clean_peaks.empty:
         print(f"   ✗ Pas de pics après soustraction du blank pour {base_name}")
-        # Sauvegarde un DataFrame vide
         output_file = output_dir / "common_peaks.parquet"
         pd.DataFrame().to_parquet(output_file)
         return
@@ -130,126 +123,86 @@ def process_full_sample(
     # 3. Calibration CCS sur les pics nettoyés
     print("\n🔵 Calibration CCS...")
     peaks_with_ccs = calibrator.calculate_ccs(clean_peaks)
-    if peaks_with_ccs.empty:
-        print(f"   ✗ Erreur dans le calcul des CCS")
-        return
-        
-    print(f"   ✓ CCS calculées pour {len(peaks_with_ccs)} pics")
-    print(f"   ✓ Plage de CCS: {peaks_with_ccs['CCS'].min():.2f} - {peaks_with_ccs['CCS'].max():.2f} Å²")
-    print(f"   ✓ CCS moyenne: {peaks_with_ccs['CCS'].mean():.2f} Å²")
-    
-    # Sauvegarde des pics finaux avec CCS
-    output_file = output_dir / "common_peaks.parquet"
-    peaks_with_ccs.to_parquet(output_file)
-    print(f"   ✓ Pics finaux sauvegardés dans {output_file}")
-    
-    # 4. Identification uniquement si on a des pics avec CCS
     if not peaks_with_ccs.empty:
-        print("\n🔍 Identification des composés...")
-        identification_dir = output_dir / "identifications"
-        matches_df = identifier.identify_compounds(peaks_with_ccs, identification_dir)
+        print(f"   ✓ CCS calculées pour {len(peaks_with_ccs)} pics")
+        print(f"   ✓ Plage de CCS: {peaks_with_ccs['CCS'].min():.2f} - {peaks_with_ccs['CCS'].max():.2f} Å²")
+        print(f"   ✓ CCS moyenne: {peaks_with_ccs['CCS'].mean():.2f} Å²")
         
-        # 5. MS2 uniquement si on a des identifications
-        if matches_df is not None and not matches_df.empty:
-            data, _ = read_parquet_data(replicates[0])
-            ms_levels = data['mslevel'].value_counts()
-            
-            matches_df = extract_ms2_for_matches(
-                matches_df,
-                replicates[0],
-                identification_dir
-            )
-            
-            if matches_df is not None:
-                if 'peaks_intensities_ms2' in matches_df.columns:
-                    ms2_count = sum(
-                        len(peaks) > 0 
-                        for peaks in matches_df['peaks_intensities_ms2']
-                        if isinstance(peaks, (list, np.ndarray))
-                    )
-                    total_matches = len(matches_df)
+        # Sauvegarde finale
+        output_file = output_dir / "common_peaks.parquet"
+        peaks_with_ccs.to_parquet(output_file)
+        print(f"   ✓ Pics finaux sauvegardés dans {output_file}")
 
-
-
-def generate_visualizations(output_dir: Path):
+def generate_visualizations(output_dir: Path) -> None:
     """Génère toutes les visualisations de la pipeline."""
-    output_dir.mkdir(exist_ok=True)
+    try:
+        print("\n📊 Génération des visualisations...")
+        output_dir.mkdir(exist_ok=True)
+        
+        # Les fichiers d'identifications sont dans output_dir/feature_matrix/
+        identifications_file = output_dir / "feature_matrix" / "feature_identifications.parquet"
+        if not identifications_file.exists():
+            raise FileNotFoundError(f"Fichier d'identifications non trouvé: {identifications_file}")
 
-    # Plot du nombre total de molécules par échantillon
-    fig = plot_unique_molecules_per_sample("data/intermediate/samples")
-    fig.savefig(output_dir / "molecules_per_sample.png")
-    plt.close()
+        # Plot du nombre total de molécules par échantillon
+        fig = plot_unique_molecules_per_sample(output_dir)
+        fig.savefig(output_dir / "molecules_per_sample.png")
+        plt.close()
 
-    # Plot des molécules niveau 1
-    fig = plot_level1_molecules_per_sample("data/intermediate/samples")
-    fig.savefig(output_dir / "level1_molecules_per_sample.png")
-    plt.close()
+        # Plot des molécules niveau 1
+        fig = plot_level1_molecules_per_sample(output_dir)
+        fig.savefig(output_dir / "level1_molecules_per_sample.png")
+        plt.close()
 
-    # Bubble plot niveau 1
-    fig_bubble = plot_level1_molecule_distribution_bubble("data/intermediate/samples") 
-    fig_bubble.savefig(output_dir / "level1_molecule_distribution_bubble.png",
-                      bbox_inches='tight',
-                      dpi=300)
-    plt.close()
+        # Bubble plot niveau 1
+        fig_bubble = plot_level1_molecule_distribution_bubble(output_dir)
+        fig_bubble.savefig(output_dir / "level1_molecule_distribution_bubble.png",
+                         bbox_inches='tight',
+                         dpi=300)
+        plt.close()
 
-    # TIC 
-    plot_tics_interactive(Config.INPUT_SAMPLES, output_dir)
+        # TIC - utilise les données d'entrée
+        plot_tics_interactive(Path("data/input/samples"), output_dir)
 
-    # Heatmaps
-    fig_similarity = plot_sample_similarity_heatmap("data/intermediate/samples")
-    fig_similarity.savefig(output_dir / "sample_similarity_heatmap_all.png")
-    plt.close()
+        # Heatmaps
+        fig_similarity = plot_sample_similarity_heatmap(output_dir)
+        fig_similarity.savefig(output_dir / "sample_similarity_heatmap_all.png")
+        plt.close()
 
-    fig_similarity_l1 = plot_sample_similarity_heatmap_by_confidence(
-        "data/intermediate/samples", 
-        confidence_levels=[1],
-        title_suffix=" - Niveau 1"
-    )
-    fig_similarity_l1.savefig(output_dir / "sample_similarity_heatmap_level1.png")
-    plt.close()
+        # Heatmaps par niveau de confiance
+        fig_similarity_l1 = plot_sample_similarity_heatmap_by_confidence(
+            output_dir, 
+            confidence_levels=[1],
+            title_suffix=" - Niveau 1"
+        )
+        fig_similarity_l1.savefig(output_dir / "sample_similarity_heatmap_level1.png")
+        plt.close()
 
-    fig_similarity_l12 = plot_sample_similarity_heatmap_by_confidence(
-        "data/intermediate/samples", 
-        confidence_levels=[1, 2],
-        title_suffix=" - Niveaux 1 et 2"
-    )
-    fig_similarity_l12.savefig(output_dir / "sample_similarity_heatmap_level1_2.png")
-    plt.close()
+        fig_similarity_l12 = plot_sample_similarity_heatmap_by_confidence(
+            output_dir, 
+            confidence_levels=[1, 2],
+            title_suffix=" - Niveaux 1 et 2"
+        )
+        fig_similarity_l12.savefig(output_dir / "sample_similarity_heatmap_level1_2.png")
+        plt.close()
 
-    fig_similarity_l123 = plot_sample_similarity_heatmap_by_confidence(
-        "data/intermediate/samples", 
-        confidence_levels=[1, 2, 3],
-        title_suffix=" - Niveaux 1, 2 et 3"
-    )
-    fig_similarity_l123.savefig(output_dir / "sample_similarity_heatmap_level1_2_3.png")
-    plt.close()
+        fig_similarity_l123 = plot_sample_similarity_heatmap_by_confidence(
+            output_dir, 
+            confidence_levels=[1, 2, 3],
+            title_suffix=" - Niveaux 1, 2 et 3"
+        )
+        fig_similarity_l123.savefig(output_dir / "sample_similarity_heatmap_level1_2_3.png")
+        plt.close()
 
-def analyze_and_save_clusters(output_dir: Path):
-    """Analyse et sauvegarde les statistiques des clusters."""
-    cluster_stats = analyze_sample_clusters("data/intermediate/samples", n_clusters=3)
-    
-    with open(output_dir / "cluster_analysis.txt", "w") as f:
-        f.write("Analyse des clusters d'échantillons\n")
-        f.write("================================\n\n")
-        for cluster_name, stats in cluster_stats.items():
-            f.write(f"\n{cluster_name}:\n")
-            f.write(f"Nombre d'échantillons: {stats['n_samples']}\n")
-            f.write(f"Moyenne de molécules par échantillon: {stats['avg_molecules_per_sample']:.1f}\n")
-            f.write("Molécules caractéristiques:\n")
-            for molecule in stats['characteristic_molecules'][:10]:
-                f.write(f"- {molecule}\n")
-            f.write("\nÉchantillons dans ce cluster:\n")
-            for sample in stats['samples']:
-                f.write(f"- {sample}\n")
-            f.write("\n" + "-"*50 + "\n")
+        print(f"   ✓ Visualisations sauvegardées dans {output_dir}")
 
-    fig_stats = plot_cluster_statistics(cluster_stats)
-    fig_stats.savefig(output_dir / "cluster_statistics.png")
-    plt.close()
+    except Exception as e:
+        print(f"Erreur lors de la création des visualisations: {str(e)}")
+        raise
+
 
 def main() -> None:
-    """Point d'entrée principal de la pipeline d'analyse."""
-    # Configuration du système de logging
+    """Point d'entrée principal de la pipeline."""
     setup_logging()
     print("\n🚀 DÉMARRAGE DE LA PIPELINE D'ANALYSE")
     print("=" * 80)
@@ -295,22 +248,10 @@ def main() -> None:
                 replicates,
                 blank_peaks,
                 calibrator,
-                identifier,
                 Path("data/intermediate/samples")
             )
 
-        # 5. Calcul des scores MS2
-        print("\n📊 Calcul des scores de similarité MS2 et niveaux de confiance...")
-        matches_paths = Path("data/intermediate/samples").glob("*/ms1/identifications/all_matches.parquet")
-        for matches_path in matches_paths:
-            print(f"   ℹ️ Traitement de {matches_path.parent.parent.parent.name}")
-            add_ms2_scores(matches_path, identifier)
-            print(f"   ✓ Scores MS2 et niveaux de confiance mis à jour")
-
-
-
-        # 6. Marker table
-
+        # 5. Feature Matrix et identification
         print("\n📊 Création de la matrice des features...")
         create_feature_matrix(
             input_dir=Path("data/intermediate/samples"),
@@ -337,6 +278,5 @@ def main() -> None:
         logger.error(f"Erreur pipeline : {str(e)}")
         raise
 
-
 if __name__ == "__main__":
-	main()
+    main()
