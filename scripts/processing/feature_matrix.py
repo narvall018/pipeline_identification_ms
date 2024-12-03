@@ -120,48 +120,81 @@ def process_features(feature_df: pd.DataFrame, raw_files: Dict, identifier: Comp
     Processus optimisé d'extraction MS2 puis identification des features alignées.
     """
     print("\n🎯 Extraction des spectres MS2...")
-    feature_df = feature_df.copy()
     from concurrent.futures import ThreadPoolExecutor
+    import multiprocessing
     from functools import partial
     from tqdm import tqdm
-
-    def extract_ms2_single(feature, raw_files):
-        """Extraction MS2 pour une feature unique"""
-        if feature['source_sample'] not in raw_files:
-            return [], []
-            
-        raw_file = raw_files[feature['source_sample']]
-        temp_df = pd.DataFrame([{
-            'peak_rt': feature['source_rt'],
-            'peak_dt': feature['source_dt']
-        }])
-        
-        temp_df = extract_ms2_for_matches(temp_df, raw_file, "temp", silent=True)
-        
-        if temp_df is not None and not temp_df.empty:
-            return (temp_df.iloc[0].get('peaks_mz_ms2', []),
-                   temp_df.iloc[0].get('peaks_intensities_ms2', []))
-        return [], []
-
-    # Extraction MS2 parallèle
-    n_with_ms2 = 0
+    
+    feature_df = feature_df.copy()
     total_features = len(feature_df)
     
-    # Utiliser le multithreading pour accélérer l'extraction
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        extract_func = partial(extract_ms2_single, raw_files=raw_files)
-        results = list(tqdm(
-            executor.map(extract_func, [feature_df.iloc[i] for i in range(total_features)]),
-            total=total_features,
-            desc="Extraction MS2"
+    def process_source_file(group_data):
+        """Traite toutes les features d'un même fichier source."""
+        source_sample, features = group_data
+        
+        if source_sample not in raw_files:
+            return [(idx, [], []) for idx in features.index]
+        
+        # Charger les données MS2 une seule fois
+        raw_file = raw_files[source_sample]
+        raw_data = pd.read_parquet(raw_file)
+        ms2_data = raw_data[raw_data['mslevel'].astype(int) == 2]
+        
+        results = []
+        for idx, feature in features.iterrows():
+            # Filtre les spectres MS2 pour cette feature
+            match_ms2 = ms2_data[
+                (ms2_data['rt'] >= feature['source_rt'] - 0.00422) &
+                (ms2_data['rt'] <= feature['source_rt'] + 0.00422) &
+                (ms2_data['dt'] >= feature['source_dt'] - 0.22) &
+                (ms2_data['dt'] <= feature['source_dt'] + 0.22)
+            ]
+            
+            if len(match_ms2) > 0:
+                match_ms2['mz_rounded'] = match_ms2['mz'].round(3)
+                spectrum = match_ms2.groupby('mz_rounded')['intensity'].sum().reset_index()
+                
+                max_intensity = spectrum['intensity'].max()
+                if max_intensity > 0:
+                    spectrum['intensity_normalized'] = (spectrum['intensity'] / max_intensity * 999).round(0).astype(int)
+                    spectrum = spectrum.nlargest(10, 'intensity')
+                    results.append((idx, spectrum['mz_rounded'].tolist(), spectrum['intensity_normalized'].tolist()))
+                else:
+                    results.append((idx, [], []))
+            else:
+                results.append((idx, [], []))
+                
+        return results
+    
+    # Grouper les features par fichier source
+    grouped_features = list(feature_df.groupby('source_sample'))
+    
+    # Calculer le nombre optimal de workers
+    n_workers = min(multiprocessing.cpu_count(), len(grouped_features))
+    
+    # Liste pour stocker tous les résultats
+    all_results = []
+    
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        # Utiliser map pour traiter tous les groupes
+        results_list = list(tqdm(
+            executor.map(process_source_file, grouped_features),
+            total=len(grouped_features),
+            desc="Extraction MS2 par fichier"
         ))
+        
+        # Aplatir la liste de résultats
+        for results in results_list:
+            all_results.extend(results)
     
-    # Attribution des résultats
-    peaks_mz_ms2_list, peaks_intensities_ms2_list = zip(*results)
-    feature_df['peaks_mz_ms2'] = peaks_mz_ms2_list
-    feature_df['peaks_intensities_ms2'] = peaks_intensities_ms2_list
+    # Trier les résultats par index pour maintenir l'ordre
+    all_results.sort(key=lambda x: x[0])
     
-    n_with_ms2 = sum(1 for x in peaks_mz_ms2_list if len(x) > 0)
+    # Assigner les résultats au DataFrame
+    feature_df['peaks_mz_ms2'] = [r[1] for r in all_results]
+    feature_df['peaks_intensities_ms2'] = [r[2] for r in all_results]
+    
+    n_with_ms2 = sum(1 for x in feature_df['peaks_mz_ms2'] if len(x) > 0)
     print(f"\n   ✓ {n_with_ms2}/{total_features} features avec spectres MS2 ({(n_with_ms2/total_features)*100:.1f}%)")
     
     # Pré-traitement de la base de données
@@ -210,7 +243,6 @@ def process_features(feature_df: pd.DataFrame, raw_files: Dict, identifier: Comp
         print("\n🎯 Calcul des scores MS2...")
         add_ms2_scores(matches, identifier)
         
-        print(f"   ✓ {len(matches)} identifications finales")
         return matches
     
     return pd.DataFrame()
