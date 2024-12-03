@@ -160,6 +160,43 @@ def generate_visualizations(output_dir: Path) -> None:
         # TIC - utilise les données d'entrée
         plot_tics_interactive(Path("data/input/samples"), output_dir)
         
+        # Heatmap globale de similarité
+        fig_similarity = plot_sample_similarity_heatmap(output_dir)
+        fig_similarity.savefig(output_dir / "sample_similarity_heatmap_all.png", 
+                             bbox_inches='tight', dpi=300)
+        plt.close()
+
+        # Heatmaps par niveau de confiance
+        # Niveau 1
+        fig_l1 = plot_sample_similarity_heatmap_by_confidence(
+            output_dir, 
+            confidence_levels=[1],
+            title_suffix=" - Niveau 1"
+        )
+        fig_l1.savefig(output_dir / "sample_similarity_heatmap_level1.png", 
+                      bbox_inches='tight', dpi=300)
+        plt.close()
+
+        # Niveaux 1 et 2
+        fig_l12 = plot_sample_similarity_heatmap_by_confidence(
+            output_dir, 
+            confidence_levels=[1, 2],
+            title_suffix=" - Niveaux 1 et 2"
+        )
+        fig_l12.savefig(output_dir / "sample_similarity_heatmap_level12.png", 
+                       bbox_inches='tight', dpi=300)
+        plt.close()
+
+        # Niveaux 1, 2 et 3
+        fig_l123 = plot_sample_similarity_heatmap_by_confidence(
+            output_dir, 
+            confidence_levels=[1, 2, 3],
+            title_suffix=" - Niveaux 1, 2 et 3"
+        )
+        fig_l123.savefig(output_dir / "sample_similarity_heatmap_level123.png", 
+                        bbox_inches='tight', dpi=300)
+        plt.close()
+        
         print(f"✓ Visualisations sauvegardées dans {output_dir}")
 
     except Exception as e:
