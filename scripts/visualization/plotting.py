@@ -230,7 +230,6 @@ def plot_sample_similarity_heatmap_by_confidence(output_dir: Union[str, Path],
 def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n: int = 20) -> plt.Figure:
     """
     Crée un bubble plot pour les molécules de niveau 1 avec les intensités spécifiques à chaque échantillon.
-    Pour chaque molécule, garde uniquement l'adduit le plus intense.
     """
     try:
         # Lire les fichiers
@@ -257,7 +256,7 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
                     # Obtenir les intensités spécifiques à chaque échantillon
                     for sample in feature_matrix.index:
                         intensity = feature_matrix.loc[sample, feature_id]
-                        if intensity > 0:  # Ne stocker que les intensités non nulles
+                        if intensity > 0:
                             intensities_data.append({
                                 'molecule': molecule,
                                 'sample': sample,
@@ -265,13 +264,13 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
                                 'adduct': match['match_adduct']
                             })
         
-        # Créer le DataFrame et garder la plus forte intensité pour chaque couple molécule/échantillon
+        # Créer le DataFrame et garder la plus forte intensité
         intensity_df = pd.DataFrame(intensities_data)
         if intensity_df.empty:
             raise ValueError("Aucune donnée d'intensité trouvée")
             
         pivot_df = (intensity_df.groupby(['molecule', 'sample'])['intensity']
-                   .max()  # Prendre l'intensité maximale pour chaque couple molécule/échantillon
+                   .max()
                    .unstack(fill_value=0))
         
         # Sélectionner les top_n molécules les plus fréquentes
@@ -279,29 +278,34 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
         top_molecules = molecule_presence.nlargest(top_n).index
         pivot_df = pivot_df[top_molecules]
         
+        # Trouver l'intensité maximale globale pour normaliser
+        global_max_intensity = pivot_df.max().max()
+        
         # Créer le bubble plot
         plt.figure(figsize=(20, 10))
         
         # Pour chaque molécule
         for molecule_idx, molecule in enumerate(pivot_df.columns):
             intensities = pivot_df[molecule]
-            max_intensity = intensities.max()
             
-            if max_intensity > 0:
-                sizes = (intensities / max_intensity * 1000).values
-                colors = intensities.values
+            if intensities.max() > 0:
+                # Normaliser les tailles par rapport à l'intensité maximale globale
+                sizes = (intensities / global_max_intensity * 1000).values
+                colors = intensities.values  # Garder les vraies intensités pour les couleurs
                 
                 plt.scatter([molecule_idx] * len(pivot_df.index), 
                           range(len(pivot_df.index)),
                           s=sizes,
                           c=colors,
                           cmap='viridis',
-                          alpha=0.6)
+                          alpha=0.6,
+                          vmin=0,
+                          vmax=global_max_intensity)  # Fixer l'échelle de couleur
                 
-                # Ajouter les valeurs d'intensité sans notation scientifique ni séparateurs
+                # Ajouter les valeurs d'intensité
                 for sample_idx, intensity in enumerate(intensities):
                     if intensity > 0:
-                        plt.annotate(f'{int(intensity)}',  # Juste le nombre entier
+                        plt.annotate(f'{int(intensity)}',
                                    (molecule_idx, sample_idx),
                                    xytext=(5, 5),
                                    textcoords='offset points',
