@@ -105,11 +105,9 @@ def process_full_sample(
     
     # 2. Soustraction du blank
     if not blank_peaks.empty:
-        print("\n🧹 Soustraction des pics du blank...")
         clean_peaks = subtract_blank_peaks(common_peaks, blank_peaks)
         pics_retires = len(common_peaks) - len(clean_peaks)
         pourcentage = (pics_retires / len(common_peaks) * 100) if len(common_peaks) > 0 else 0
-        print(f"   ✓ {pics_retires} pics retirés ({pourcentage:.1f}%)")
         print(f"   ✓ {len(clean_peaks)} pics après soustraction du blank")
     else:
         clean_peaks = common_peaks
