@@ -1,7 +1,6 @@
 #scripts/processing/identification.py
 #-*- coding:utf-8 -*-
 
-
 # Importation des modules
 import logging
 import pandas as pd
