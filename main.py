@@ -41,6 +41,8 @@ from scripts.processing.blank_processing import (
 )
 from scripts.processing.feature_matrix import create_feature_matrix
 
+
+
 # Suppression des warnings pandas
 warnings.filterwarnings('ignore')
 pd.options.mode.chained_assignment = None
@@ -129,10 +131,61 @@ def process_blank_files(blank_files: List[Path]) -> pd.DataFrame:
         
     return blank_peaks
 
+# Définir les fonctions de visualisation au niveau global
+def generate_molecules_per_sample(output_dir: Path):
+    fig = plot_unique_molecules_per_sample(output_dir)
+    fig.savefig(output_dir / "molecules_per_sample.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_level1_molecules(output_dir: Path):
+    fig = plot_level1_molecules_per_sample(output_dir)
+    fig.savefig(output_dir / "level1_molecules_per_sample.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_bubble_plot(output_dir: Path):
+    fig = plot_level1_molecule_distribution_bubble(output_dir)
+    fig.savefig(output_dir / "level1_molecule_distribution_bubble.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_similarity_heatmap(output_dir: Path):
+    fig = plot_sample_similarity_heatmap(output_dir)
+    fig.savefig(output_dir / "sample_similarity_heatmap_all.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_level1_heatmap(output_dir: Path):
+    fig = plot_sample_similarity_heatmap_by_confidence(
+        output_dir, 
+        confidence_levels=[1],
+        title_suffix=" - Niveau 1"
+    )
+    fig.savefig(output_dir / "sample_similarity_heatmap_level1.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_level12_heatmap(output_dir: Path):
+    fig = plot_sample_similarity_heatmap_by_confidence(
+        output_dir, 
+        confidence_levels=[1, 2],
+        title_suffix=" - Niveaux 1 et 2"
+    )
+    fig.savefig(output_dir / "sample_similarity_heatmap_level12.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_level123_heatmap(output_dir: Path):
+    fig = plot_sample_similarity_heatmap_by_confidence(
+        output_dir, 
+        confidence_levels=[1, 2, 3],
+        title_suffix=" - Niveaux 1, 2 et 3"
+    )
+    fig.savefig(output_dir / "sample_similarity_heatmap_level123.png", bbox_inches='tight', dpi=300)
+    plt.close(fig)
+
+def generate_tics(output_dir: Path):
+    plot_tics_interactive(Path("data/input/samples"), output_dir)
+
 def generate_visualizations(output_dir: Path) -> None:
-    """Génère toutes les visualisations de la pipeline."""
+    """Génère toutes les visualisations de la pipeline en parallèle."""
     try:
-        print("\n📊 Génération des visualisations...")
+        print("\n📊 Génération des visualisations en parallèle...")
         output_dir.mkdir(exist_ok=True)
         
         # Les fichiers d'identifications sont dans output_dir/feature_matrix/
@@ -140,64 +193,38 @@ def generate_visualizations(output_dir: Path) -> None:
         if not identifications_file.exists():
             raise FileNotFoundError(f"Fichier d'identifications non trouvé: {identifications_file}")
 
-        # Plot du nombre total de molécules par échantillon
-        fig = plot_unique_molecules_per_sample(output_dir)
-        fig.savefig(output_dir / "molecules_per_sample.png")
-        plt.close()
+        # Liste des tâches à exécuter avec leurs arguments
+        tasks = [
+            (generate_molecules_per_sample, output_dir),
+            (generate_level1_molecules, output_dir),
+            (generate_bubble_plot, output_dir),
+            (generate_similarity_heatmap, output_dir),
+            (generate_level1_heatmap, output_dir),
+            (generate_level12_heatmap, output_dir),
+            (generate_level123_heatmap, output_dir),
+            (generate_tics, output_dir)
+        ]
 
-        # Plot des molécules niveau 1
-        fig = plot_level1_molecules_per_sample(output_dir)
-        fig.savefig(output_dir / "level1_molecules_per_sample.png")
-        plt.close()
+        # Exécution parallèle des tâches
+        max_workers = min(mp.cpu_count(), len(tasks))
+        futures_to_task = {}
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Soumettre toutes les tâches
+            for func, arg in tasks:
+                future = executor.submit(func, arg)
+                futures_to_task[future] = func.__name__
+            
+            # Attendre leur complétion avec une barre de progression
+            with tqdm(total=len(futures_to_task), desc="Génération des visualisations") as pbar:
+                for future in as_completed(futures_to_task):
+                    task_name = futures_to_task[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        print(f"Erreur lors de la génération de {task_name}: {str(e)}")
+                    pbar.update(1)
 
-        # Bubble plot niveau 1
-        fig_bubble = plot_level1_molecule_distribution_bubble(output_dir)
-        fig_bubble.savefig(output_dir / "level1_molecule_distribution_bubble.png",
-                         bbox_inches='tight',
-                         dpi=300)
-        plt.close()
-
-        # TIC - utilise les données d'entrée
-        plot_tics_interactive(Path("data/input/samples"), output_dir)
-        
-        # Heatmap globale de similarité
-        fig_similarity = plot_sample_similarity_heatmap(output_dir)
-        fig_similarity.savefig(output_dir / "sample_similarity_heatmap_all.png", 
-                             bbox_inches='tight', dpi=300)
-        plt.close()
-
-        # Heatmaps par niveau de confiance
-        # Niveau 1
-        fig_l1 = plot_sample_similarity_heatmap_by_confidence(
-            output_dir, 
-            confidence_levels=[1],
-            title_suffix=" - Niveau 1"
-        )
-        fig_l1.savefig(output_dir / "sample_similarity_heatmap_level1.png", 
-                      bbox_inches='tight', dpi=300)
-        plt.close()
-
-        # Niveaux 1 et 2
-        fig_l12 = plot_sample_similarity_heatmap_by_confidence(
-            output_dir, 
-            confidence_levels=[1, 2],
-            title_suffix=" - Niveaux 1 et 2"
-        )
-        fig_l12.savefig(output_dir / "sample_similarity_heatmap_level12.png", 
-                       bbox_inches='tight', dpi=300)
-        plt.close()
-
-        # Niveaux 1, 2 et 3
-        fig_l123 = plot_sample_similarity_heatmap_by_confidence(
-            output_dir, 
-            confidence_levels=[1, 2, 3],
-            title_suffix=" - Niveaux 1, 2 et 3"
-        )
-        fig_l123.savefig(output_dir / "sample_similarity_heatmap_level123.png", 
-                        bbox_inches='tight', dpi=300)
-        plt.close()
-        
-        print(f"✓ Visualisations sauvegardées dans {output_dir}")
+        print(f"   ✓ Visualisations sauvegardées dans {output_dir}")
 
     except Exception as e:
         print(f"❌ Erreur lors de la création des visualisations: {str(e)}")
@@ -227,7 +254,7 @@ def process_single_sample(
                     output.getvalue()
                 )
             
-            # 2. Soustraction du blank 🧹
+            # 2. Soustraction du blank 
             if not blank_peaks.empty:
                 clean_peaks = subtract_blank_peaks(common_peaks, blank_peaks)
             else:
@@ -241,7 +268,7 @@ def process_single_sample(
                     output.getvalue()
                 )
             
-            # 3. Calibration CCS 📏
+            # 3. Calibration CCS 
             peaks_with_ccs = calibrator.calculate_ccs(clean_peaks)
             
             # Mise à jour des statistiques
