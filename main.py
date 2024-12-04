@@ -112,11 +112,15 @@ def process_blank_files(blank_files: List[Path]) -> pd.DataFrame:
     """Traite tous les fichiers blanks."""
     blank_peaks = pd.DataFrame()
     
+    # Message concernant la présence ou l'absence de blanks
     if blank_files:
         print(f"   ✓ {len(blank_files)} fichier(s) blank trouvé(s):")
         for blank_file in blank_files:
             print(f"      - {blank_file.name}")
+    else:
+        print("   ℹ️ Aucun blank trouvé dans data/input/blanks/")
             
+    if blank_files:
         for blank_file in blank_files:
             blank_peaks_group = process_blank_with_replicates(
                 blank_file.stem,
@@ -125,10 +129,9 @@ def process_blank_files(blank_files: List[Path]) -> pd.DataFrame:
             )
             if not blank_peaks_group.empty:
                 blank_peaks = pd.concat([blank_peaks, blank_peaks_group])
-        print(f"   ✓ {len(blank_peaks)} pics de blank détectés")
-    else:
-        print("   ℹ️ Aucun blank trouvé dans data/input/blanks/")
-        
+        if not blank_peaks.empty:
+            print(f"   ✓ {len(blank_peaks)} pics de blank détectés")
+            
     return blank_peaks
 
 def generate_molecules_per_sample(output_dir: Path):
@@ -410,8 +413,14 @@ def main() -> None:
         print("\n📁 Recherche des blanks...")
         blank_dir = Path("data/input/blanks")
         blank_files = list(blank_dir.glob("*.parquet"))
-        
-        print("\n📁 Recherche des fichiers d'échantillons...")
+        if blank_files:
+            print(f"   ✓ {len(blank_files)} fichier(s) blank trouvé(s):")
+            for blank_file in blank_files:
+                print(f"      - {blank_file.name}")
+        else:
+            print("   ℹ️ Aucun blank trouvé dans data/input/blanks/")
+
+        print("\n📁 Recherche des échantillons...")
         samples_dir = Path(Config.INPUT_SAMPLES)
         sample_files = list(samples_dir.glob("*.parquet"))
 
@@ -423,10 +432,20 @@ def main() -> None:
         for base_name, replicates in replicate_groups.items():
             print(f"      - {base_name}: {len(replicates)} réplicat(s)")
 
-        # 4. Traitement des blanks (séquentiel)
-        blank_peaks = process_blank_files(blank_files)
+        print("\n" + "="*80)
+        print("TRAITEMENT DES ÉCHANTILLONS")
+        print("=" * 80)
 
-        
+        # 4. Traitement des blanks
+        if blank_files:
+            blank_peaks = process_blank_with_replicates(
+                blank_files[0].stem,
+                blank_files,
+                Path("data/intermediate/blanks")
+            )
+        else:
+            blank_peaks = pd.DataFrame()
+
         # 5. Traitement parallèle des échantillons
         results = process_samples_parallel(
             replicate_groups,
