@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class CCSCalibrator(object):
 	"""
-	Classe pour la calibration et le calcul des valeurs CCS (Cross-Section Collisionnelle).
+	Classe pour la calibration et le calcul des valeurs CCS.
 
 	Attributes:
 		calibration_data (pd.DataFrame): Données de calibration CCS.
@@ -161,14 +161,11 @@ class CCSCalibrator(object):
 				axis=1
 			)
 
-			# Ajoute un message dans les logs indiquant le nombre de CCS calculées
 			logger.info(f"CCS calculées pour {len(df)} pics.")
 
 			# Retourne le DataFrame avec la colonne CCS ajoutée
 			return df
 		except Exception as e:
 			# Log l'erreur rencontrée lors du calcul des CCS
-			logger.error(f"Erreur lors du calcul des CCS: {str(e)}")
-			
-			# Relève une exception pour signaler le problème
+			logger.error(f"Erreur lors du calcul des CCS: {str(e)}")			
 			raise
