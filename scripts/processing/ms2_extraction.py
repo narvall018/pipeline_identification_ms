@@ -1,9 +1,6 @@
 #scripts/processing/ms2_extraction.py
 #-*- coding:utf-8 -*-
 
-
-# -*- coding:utf-8 -*-
-
 import logging
 import pandas as pd
 from pathlib import Path
