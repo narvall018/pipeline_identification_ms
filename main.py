@@ -388,6 +388,7 @@ def process_samples_parallel(
 def main() -> None:
     """Point d'entrée principal de la pipeline."""
     setup_logging()
+    start_time = time.time()
     print("\n🚀 DÉMARRAGE DE LA PIPELINE D'ANALYSE")
     print("=" * 80)
 
@@ -425,6 +426,7 @@ def main() -> None:
         # 4. Traitement des blanks (séquentiel)
         blank_peaks = process_blank_files(blank_files)
 
+        
         # 5. Traitement parallèle des échantillons
         results = process_samples_parallel(
             replicate_groups,
@@ -437,6 +439,10 @@ def main() -> None:
         if not any(r.success for r in results.values()):
             raise Exception("Aucun échantillon n'a été traité avec succès")
 
+        print("\n" + "="*80)
+        print("ALIGNEMENT DES FEATURES")
+        print("="*80)
+        
         # 6. Feature Matrix et identification
         print("\n📊 Création de la matrice des features...")
         create_feature_matrix(
@@ -445,14 +451,36 @@ def main() -> None:
             identifier=identifier
         )
 
+        print("\n" + "="*80)
+        print("GÉNÉRATION DES VISUALISATIONS")
+        print("="*80)
+        
         # 7. Visualisations
         output_dir = Path("output")
         generate_visualizations(output_dir)
         
-        print("\n📊 Analyse des similarités entre échantillons...")
+        print("\n" + "="*80)
+        print("ANALYSE DES SIMILARITÉS")
+        print("="*80)
+        
+        print("\n📊 Analyse des clusters d'échantillons...")
         analyze_and_save_clusters(output_dir)
 
-        print("\n✅ TRAITEMENT TERMINÉ AVEC SUCCÈS")
+
+        total_time = time.time() - start_time
+        minutes = int(total_time // 60)
+        seconds = int(total_time % 60)
+        
+
+        print("\n" + "="*80)
+        print(" ✅ FIN DU TRAITEMENT")
+        print("="*80)
+        print("\n Pipeline d'analyse terminée avec succès")
+        if minutes > 0:
+            print(f"   • Temps de calcul total: {minutes} min {seconds} sec")
+        else:
+            print(f"   • Temps de calcul total: {seconds} sec")
+        print(f"   • {len(replicate_groups)} échantillons traités")
         print("=" * 80)
 
     except Exception as e:
@@ -462,3 +490,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
