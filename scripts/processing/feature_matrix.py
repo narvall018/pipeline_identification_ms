@@ -1,3 +1,4 @@
+#scripts/processing/feature_matrix.py
 # -*- coding:utf-8 -*-
 
 import logging
@@ -47,10 +48,9 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
     print("\n🎯 Clustering des features...")
     X = df[['mz', 'drift_time', 'retention_time']].values
     
-    # Mêmes tolérances que peak_detection
-    mz_tolerance = np.median(X[:, 0]) * 1e-4  # 0.1 ppm
-    dt_tolerance = np.median(X[:, 1]) * 0.10   # 10%
-    rt_tolerance = 0.20                        # 0.2 min
+    mz_tolerance = np.median(X[:, 0]) * 1e-4  
+    dt_tolerance = np.median(X[:, 1]) * 0.10   
+    rt_tolerance = 0.20                      
     
     # Normalisation
     X_scaled = np.zeros_like(X)
