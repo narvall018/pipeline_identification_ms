@@ -189,6 +189,8 @@ class MS2Comparator(object):
 			return 0.0
 
 
+# Dans ms2_comparaison.py, modifions la fonction add_ms2_scores :
+
 def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
     """
     Ajoute les scores de similarité MS2 et recalcule les niveaux de confiance.
@@ -198,17 +200,22 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
         comparator = MS2Comparator(tolerance_mz=0.01)
         from tqdm import tqdm
         
-        # Pré-filtrer les matches qui nécessitent une analyse MS2
+        # Initialiser la colonne ms2_similarity_score avec 0
+        matches_df['ms2_similarity_score'] = 0.0
+        
+        # Garder une copie des niveau 1 existants avant modification
+        level1_mask = matches_df['confidence_level'] == 1
+        level1_indices = matches_df[level1_mask].index
+        
+        # Pré-filtrer les matches qui nécessitent une analyse MS2 (exclure niveau 1)
         matches_to_analyze = matches_df[
+            (~level1_mask) &  # Exclure niveau 1
             (matches_df['has_ms2_db'] == 1) &  # Uniquement ceux avec MS2 dans la DB
             matches_df['peaks_mz_ms2'].apply(lambda x: isinstance(x, list) and len(x) > 0)  # Et qui ont des spectres exp
         ]
         
         n_matches_with_ms2 = len(matches_to_analyze)
         print(f"   ✓ {n_matches_with_ms2}/{len(matches_df)} matches avec MS2 à analyser (spectres exp + DB)")
-        
-        # Initialiser tous les scores à 0
-        matches_df['ms2_similarity_score'] = 0.0
         
         # Créer un cache pour les spectres de référence
         ms2_ref_cache = {}
@@ -252,10 +259,10 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
         # Recalcul des niveaux de confiance
         print("\n📊 Calcul des niveaux de confiance...")
         for idx in tqdm(matches_df.index, desc="Attribution niveaux"):
-            confidence_level, reason = assign_confidence_level(matches_df.loc[idx])
-            matches_df.loc[idx, 'confidence_level'] = confidence_level
-            matches_df.loc[idx, 'confidence_reason'] = reason
-
+            if not level1_mask[idx]:  # Ne pas recalculer pour le niveau 1
+                confidence_level, reason = assign_confidence_level(matches_df.loc[idx])
+                matches_df.loc[idx, 'confidence_level'] = confidence_level
+                matches_df.loc[idx, 'confidence_reason'] = reason
 
         total_candidates = len(matches_df)
         unique_molecules = matches_df['match_name'].nunique()
@@ -264,3 +271,5 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
     except Exception as e:
         logger.error(f"Erreur lors du calcul des scores MS2: {str(e)}")
         raise
+
+   
