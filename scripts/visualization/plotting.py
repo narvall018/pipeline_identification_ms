@@ -202,6 +202,8 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
     Crée un bubble plot pour les molécules de niveau 1 avec les intensités spécifiques à chaque échantillon.
     """
     try:
+        # Charger les données
+        feature_matrix = pd.read_parquet(Path(output_dir) / "feature_matrix" / "feature_matrix.parquet")
         merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
         
         # Filtrer niveau 1
@@ -209,22 +211,26 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
         
         intensities_data = []
         
-        # Pour chaque molécule
+        # Pour chaque molécule de niveau 1
         for _, row in level1_df.iterrows():
-            intensity = row['intensity']
-            samples = row['samples'].split(',')
-            for sample in samples:
-                intensities_data.append({
-                    'molecule': row['match_name'],
-                    'sample': sample,
-                    'intensity': intensity
-                })
+            feature_id = f"{row['feature_id']}_mz{row['mz']:.4f}"
+            
+            # Récupérer les intensités de la matrice pour cette feature
+            if feature_id in feature_matrix.columns:
+                for sample in feature_matrix.index:
+                    intensity = feature_matrix.loc[sample, feature_id]
+                    if intensity > 0:  # Ne garder que les intensités non nulles
+                        intensities_data.append({
+                            'molecule': row['match_name'],
+                            'sample': sample,
+                            'intensity': intensity
+                        })
         
         # Créer le DataFrame et garder la plus forte intensité
         intensity_df = pd.DataFrame(intensities_data)
         if intensity_df.empty:
             raise ValueError("Aucune donnée d'intensité trouvée")
-        
+            
         pivot_df = (intensity_df.groupby(['molecule', 'sample'])['intensity']
                    .max()
                    .unstack(fill_value=0))
