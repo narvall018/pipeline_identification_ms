@@ -1,4 +1,5 @@
-# blank processing
+#scripts/processing/ccs_calibration.py
+#-*- coding:utf-8 -*-
 
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Optional
@@ -16,7 +17,7 @@ def process_blank_file(
     current_file: int = 1
 ) -> Optional[pd.DataFrame]:
     """
-    Traite un fichier blank pour détecter les pics (sans CCS).
+    Traite un fichier blank pour détecter les pics.
     
     Args:
         file_path: Chemin vers le fichier blank
