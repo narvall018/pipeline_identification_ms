@@ -265,9 +265,7 @@ def process_features(feature_df: pd.DataFrame, raw_files: Dict, identifier: Comp
 
 
 def create_feature_matrix(input_dir: Path, output_dir: Path, identifier: CompoundIdentifier) -> None:
-    """
-    Fonction principale pour générer la matrice de features et les identifications.
-    """
+    """Fonction principale pour générer la matrice de features et les identifications."""
     try:
         # 1. Alignement des features
         matrix, feature_info, raw_files = align_features_across_samples(input_dir)
@@ -282,13 +280,8 @@ def create_feature_matrix(input_dir: Path, output_dir: Path, identifier: Compoun
         matrix.to_parquet(output_dir / "feature_matrix.parquet")
         matrix.to_csv(output_dir / "feature_matrix.csv")
         
-        # Sauvegarder les infos des features
-        feature_info.to_parquet(output_dir / "feature_info.parquet")
-        
-        # Sauvegarder les identifications
+        # Si on a des identifications, créer les fichiers combinés
         if not identifications.empty:
-            identifications.to_parquet(output_dir / "feature_identifications.parquet")
-            
             # Créer un fichier de résumé complet
             summary_df = pd.merge(
                 feature_info.reset_index().rename(columns={'index': 'feature_idx'}),
@@ -297,36 +290,32 @@ def create_feature_matrix(input_dir: Path, output_dir: Path, identifier: Compoun
                 how='left'
             )
             
-            # Sauvegarder en formats Parquet et CSV
-            summary_df.to_parquet(output_dir / "complete_results.parquet")
+            # Sauvegarder en parquet
+            summary_df.to_parquet(output_dir / "features_complete.parquet")
             
-            # Pour le CSV, convertir les listes en strings
+            # Pour le CSV, convertir les listes en strings pour les spectres MS2
             csv_df = summary_df.copy()
             csv_df['peaks_mz_ms2'] = csv_df['peaks_mz_ms2'].apply(lambda x: ';'.join(map(str, x)) if isinstance(x, list) else '')
             csv_df['peaks_intensities_ms2'] = csv_df['peaks_intensities_ms2'].apply(lambda x: ';'.join(map(str, x)) if isinstance(x, list) else '')
-            csv_df.to_csv(output_dir / "complete_results.csv", index=False)
+            csv_df.to_csv(output_dir / "features_complete.csv", index=False)
         
         print("\n✅ Création de la matrice des features terminée avec succès")
         print(f"   • {matrix.shape[1]} features")
         print(f"   • {matrix.shape[0]} échantillons")
         if not identifications.empty:
-            # Distribution des niveaux de confiance par échantillon
             print("\n📊 Distribution des niveaux de confiance:")
-            for sample in sorted(matrix.index):  # Utiliser l'index de la matrice pour avoir tous les échantillons
+            for sample in sorted(matrix.index):
                 print(f"\n   • {sample}:")
                 
-                # Pour chaque feature, vérifier si l'échantillon est présent
                 sample_feature_indices = feature_info[
                     feature_info['samples'].str.contains(sample)
                 ].index
                 
-                # Filtrer les identifications pour ces features
                 sample_identifications = identifications[
                     identifications['feature_idx'].isin(sample_feature_indices)
                 ]
 
                 if len(sample_identifications) > 0:
-                    # Pour chaque niveau de confiance
                     for level in sorted(sample_identifications['confidence_level'].unique()):
                         level_df = sample_identifications[
                             sample_identifications['confidence_level'] == level

@@ -13,27 +13,10 @@ from typing import Union, Tuple, Dict, List
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-def get_molecules_per_sample(identifications: pd.DataFrame, feature_info: pd.DataFrame, confidence_level: int = None) -> pd.DataFrame:
+def get_molecules_per_sample(merged_df: pd.DataFrame, confidence_level: int = None) -> pd.DataFrame:
     """
-    Compte les molécules uniques par échantillon en tenant compte des features présentes dans plusieurs échantillons.
-    
-    Args:
-        identifications: DataFrame des identifications
-        feature_info: DataFrame des infos des features
-        confidence_level: Niveau de confiance à filtrer (optionnel)
-        
-    Returns:
-        DataFrame avec le compte des molécules par échantillon
+    Compte les molécules uniques par échantillon.
     """
-    # Fusionner les données
-    merged_df = pd.merge(
-        identifications,
-        feature_info[['feature_id', 'samples', 'source_sample']],
-        left_on='feature_idx',
-        right_index=True,
-        how='left'
-    )
-    
     # Filtrer par niveau de confiance si spécifié
     if confidence_level is not None:
         merged_df = merged_df[merged_df['confidence_level'] == confidence_level]
@@ -57,16 +40,13 @@ def get_molecules_per_sample(identifications: pd.DataFrame, feature_info: pd.Dat
     return molecule_counts
 
 def plot_unique_molecules_per_sample(output_dir: Union[str, Path]) -> plt.Figure:
-    """
-    Génère un graphique du nombre de molécules uniques par échantillon.
-    """
+    """Génère un graphique du nombre de molécules uniques par échantillon."""
     try:
-        # Lire les fichiers
-        identifications = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_identifications.parquet")
-        feature_info = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_info.parquet")
+        # Lire le fichier features_complete
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
         
         # Obtenir les comptes
-        molecule_counts = get_molecules_per_sample(identifications, feature_info)
+        molecule_counts = get_molecules_per_sample(merged_df)
         
         plt.figure(figsize=(12, 6))
         sns.barplot(data=molecule_counts, x='sample', y='n_molecules', palette="viridis")
@@ -85,21 +65,16 @@ def plot_unique_molecules_per_sample(output_dir: Union[str, Path]) -> plt.Figure
 
     except Exception as e:
         print(f"Erreur détaillée lors de la création du graphique: {str(e)}")
-        print(f"Colonnes disponibles dans identifications: {identifications.columns.tolist()}")
-        print(f"Colonnes disponibles dans feature_info: {feature_info.columns.tolist()}")
         raise
 
 def plot_level1_molecules_per_sample(output_dir: Union[str, Path]) -> plt.Figure:
-    """
-    Graphique des molécules niveau 1 uniques par échantillon.
-    """
+    """Graphique des molécules niveau 1 uniques par échantillon."""
     try:
-        # Lire les fichiers
-        identifications = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_identifications.parquet")
-        feature_info = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_info.parquet")
+        # Lire le fichier features_complete
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
         
         # Obtenir les comptes pour le niveau 1
-        molecule_counts = get_molecules_per_sample(identifications, feature_info, confidence_level=1)
+        molecule_counts = get_molecules_per_sample(merged_df, confidence_level=1)
         
         plt.figure(figsize=(12, 6))
         sns.barplot(data=molecule_counts, x='sample', y='n_molecules', color='green')
@@ -118,19 +93,17 @@ def plot_level1_molecules_per_sample(output_dir: Union[str, Path]) -> plt.Figure
 
     except Exception as e:
         print(f"Erreur détaillée lors de la création du graphique: {str(e)}")
-        print(f"Colonnes disponibles dans identifications: {identifications.columns.tolist()}")
-        print(f"Colonnes disponibles dans feature_info: {feature_info.columns.tolist()}")
         raise
 
-def create_similarity_matrix(matches_df: pd.DataFrame, feature_info: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def create_similarity_matrix(merged_df: pd.DataFrame) -> pd.DataFrame:
     """
     Crée une matrice de similarité basée sur les molécules uniques communes.
     """
     # Créer un DataFrame avec une ligne par couple molécule-échantillon
     all_sample_molecules = []
-    for _, match in matches_df.iterrows():
-        feature_samples = feature_info.loc[match['feature_idx'], 'samples'].split(',')
-        for sample in feature_samples:
+    for _, match in merged_df.iterrows():
+        samples = match['samples'].split(',')
+        for sample in samples:
             all_sample_molecules.append({
                 'sample': sample,
                 'molecule': match['match_name']
@@ -162,15 +135,13 @@ def create_similarity_matrix(matches_df: pd.DataFrame, feature_info: pd.DataFram
                 similarity = (intersection / union) * 100
                 similarity_matrix.loc[idx1, idx2] = float(similarity)
     
-    return similarity_matrix, molecule_matrix
+    return similarity_matrix
 
 def plot_sample_similarity_heatmap(output_dir: Union[str, Path]) -> plt.Figure:
     """Génère une heatmap de similarité entre échantillons."""
     try:
-        matches_df = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_identifications.parquet")
-        feature_info = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_info.parquet")
-        
-        similarity_matrix, _ = create_similarity_matrix(matches_df, feature_info)
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
+        similarity_matrix = create_similarity_matrix(merged_df)
         
         similarity_array = similarity_matrix.to_numpy(dtype=float)
         linkage = hierarchy.linkage(pdist(similarity_array), method='average')
@@ -197,13 +168,12 @@ def plot_sample_similarity_heatmap_by_confidence(output_dir: Union[str, Path],
                                                title_suffix: str = "") -> plt.Figure:
     """Génère une heatmap de similarité pour des niveaux de confiance spécifiques."""
     try:
-        matches_df = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_identifications.parquet")
-        feature_info = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_info.parquet")
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
         
         # Filtrer par niveaux de confiance
-        filtered_df = matches_df[matches_df['confidence_level'].isin(confidence_levels)]
+        filtered_df = merged_df[merged_df['confidence_level'].isin(confidence_levels)]
         
-        similarity_matrix, _ = create_similarity_matrix(filtered_df, feature_info)
+        similarity_matrix = create_similarity_matrix(filtered_df)
         
         similarity_array = similarity_matrix.to_numpy(dtype=float)
         linkage = hierarchy.linkage(pdist(similarity_array), method='average')
@@ -232,51 +202,37 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
     Crée un bubble plot pour les molécules de niveau 1 avec les intensités spécifiques à chaque échantillon.
     """
     try:
-        # Lire les fichiers
-        identifications = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_identifications.parquet")
-        feature_info = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_info.parquet")
-        feature_matrix = pd.read_parquet(Path(output_dir) / "feature_matrix/feature_matrix.parquet")
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
         
         # Filtrer niveau 1
-        level1_df = identifications[identifications['confidence_level'] == 1].copy()
+        level1_df = merged_df[merged_df['confidence_level'] == 1].copy()
         
         intensities_data = []
         
-        # Parcourir chaque molécule unique
-        for molecule in level1_df['match_name'].unique():
-            molecule_matches = level1_df[level1_df['match_name'] == molecule]
-            
-            # Pour chaque match
-            for _, match in molecule_matches.iterrows():
-                feature_idx = match['feature_idx']
-                feature_info_row = feature_info.loc[feature_idx]
-                feature_id = f"{feature_info_row['feature_id']}_mz{feature_info_row['mz']:.4f}"
-                
-                if feature_id in feature_matrix.columns:
-                    # Obtenir les intensités spécifiques à chaque échantillon
-                    for sample in feature_matrix.index:
-                        intensity = feature_matrix.loc[sample, feature_id]
-                        if intensity > 0:
-                            intensities_data.append({
-                                'molecule': molecule,
-                                'sample': sample,
-                                'intensity': intensity,
-                                'adduct': match['match_adduct']
-                            })
+        # Pour chaque molécule
+        for _, row in level1_df.iterrows():
+            intensity = row['intensity']
+            samples = row['samples'].split(',')
+            for sample in samples:
+                intensities_data.append({
+                    'molecule': row['match_name'],
+                    'sample': sample,
+                    'intensity': intensity
+                })
         
         # Créer le DataFrame et garder la plus forte intensité
         intensity_df = pd.DataFrame(intensities_data)
         if intensity_df.empty:
             raise ValueError("Aucune donnée d'intensité trouvée")
-            
+        
         pivot_df = (intensity_df.groupby(['molecule', 'sample'])['intensity']
                    .max()
                    .unstack(fill_value=0))
         
         # Sélectionner les top_n molécules les plus fréquentes
-        molecule_presence = (pivot_df > 0).sum()
+        molecule_presence = (pivot_df > 0).sum(axis=1)
         top_molecules = molecule_presence.nlargest(top_n).index
-        pivot_df = pivot_df[top_molecules]
+        pivot_df = pivot_df.loc[top_molecules]
         
         # Trouver l'intensité maximale globale pour normaliser
         global_max_intensity = pivot_df.max().max()
@@ -285,16 +241,16 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
         plt.figure(figsize=(20, 10))
         
         # Pour chaque molécule
-        for molecule_idx, molecule in enumerate(pivot_df.columns):
-            intensities = pivot_df[molecule]
+        for molecule_idx, molecule in enumerate(pivot_df.index):
+            intensities = pivot_df.loc[molecule]
             
             if intensities.max() > 0:
                 # Normaliser les tailles par rapport à l'intensité maximale globale
                 sizes = (intensities / global_max_intensity * 1000).values
                 colors = intensities.values  # Garder les vraies intensités pour les couleurs
                 
-                plt.scatter([molecule_idx] * len(pivot_df.index), 
-                          range(len(pivot_df.index)),
+                plt.scatter([molecule_idx] * len(pivot_df.columns), 
+                          range(len(pivot_df.columns)),
                           s=sizes,
                           c=colors,
                           cmap='viridis',
@@ -312,7 +268,7 @@ def plot_level1_molecule_distribution_bubble(output_dir: Union[str, Path], top_n
                                    fontsize=8)
         
         plt.xticks(range(len(top_molecules)), top_molecules, rotation=45, ha='right')
-        plt.yticks(range(len(pivot_df.index)), pivot_df.index)
+        plt.yticks(range(len(pivot_df.columns)), pivot_df.columns)
         plt.grid(True, alpha=0.3, linestyle='--')
         
         cbar = plt.colorbar(label='Intensité')
@@ -381,24 +337,24 @@ def plot_tics_interactive(input_dir: Union[str, Path], output_dir: Union[str, Pa
         print(f"Erreur lors de la création du TIC: {str(e)}")
         raise
 
-def analyze_sample_clusters(input_dir: Union[str, Path], n_clusters: int = 3) -> Dict:
+def analyze_sample_clusters(merged_df: pd.DataFrame, n_clusters: int = 3) -> Dict:
     """
     Analyse les clusters d'échantillons basés sur leurs profils moléculaires.
+    
+    Args:
+        merged_df: DataFrame contenant les données features_complete
+        n_clusters: nombre de clusters souhaité
     """
     try:
-        # Charger les données
-        identifications = pd.read_parquet(Path(input_dir) / "feature_matrix/feature_identifications.parquet")
-        feature_info = pd.read_parquet(Path(input_dir) / "feature_matrix/feature_info.parquet")
-        
         # Créer un DataFrame avec une ligne par couple molécule-échantillon
         all_sample_molecules = []
-        for _, match in identifications.iterrows():
-            feature_samples = feature_info.loc[match['feature_idx'], 'samples'].split(',')
-            for sample in feature_samples:
+        for _, match in merged_df.iterrows():
+            samples = match['samples'].split(',')
+            for sample in samples:
                 all_sample_molecules.append({
                     'sample': sample,
                     'molecule': match['match_name'],
-                    'intensity': match['peak_intensity']
+                    'intensity': match['intensity']
                 })
         
         df_expanded = pd.DataFrame(all_sample_molecules)
@@ -460,6 +416,58 @@ def analyze_sample_clusters(input_dir: Union[str, Path], n_clusters: int = 3) ->
         print(f"Erreur lors de l'analyse des clusters: {str(e)}")
         raise
 
+def analyze_and_save_clusters(output_dir: Path) -> None:
+    """
+    Analyse et sauvegarde les statistiques des clusters.
+    """
+    try:
+        # Charger les données
+        features_file = output_dir / "feature_matrix" / "features_complete.parquet"
+        merged_df = pd.read_parquet(features_file)
+        
+        # Le nombre de clusters sera automatiquement ajusté dans analyze_sample_clusters
+        cluster_stats = analyze_sample_clusters(merged_df, n_clusters=3)
+        
+        # Sauvegarder l'analyse textuelle
+        with open(output_dir / "cluster_analysis.txt", "w", encoding='utf-8') as f:
+            f.write("Analyse des clusters d'échantillons\n")
+            f.write("================================\n\n")
+            
+            # Statistiques globales
+            total_samples = sum(stats['n_samples'] for stats in cluster_stats.values())
+            avg_molecules_global = np.mean([stats['avg_molecules_per_sample'] 
+                                          for stats in cluster_stats.values()])
+            
+            f.write(f"Statistiques globales:\n")
+            f.write(f"- Nombre total d'échantillons: {total_samples}\n")
+            f.write(f"- Moyenne globale de molécules par échantillon: {avg_molecules_global:.1f}\n\n")
+            
+            # Détails par cluster
+            for cluster_name, stats in cluster_stats.items():
+                f.write(f"\n{cluster_name}:\n")
+                f.write(f"Nombre d'échantillons: {stats['n_samples']}\n")
+                f.write(f"Moyenne de molécules par échantillon: {stats['avg_molecules_per_sample']:.1f}\n")
+                
+                f.write("\nMolécules caractéristiques:\n")
+                for idx, molecule in enumerate(stats['characteristic_molecules'][:10], 1):
+                    f.write(f"{idx}. {molecule}\n")
+                
+                f.write("\nÉchantillons dans ce cluster:\n")
+                for sample in sorted(stats['samples']):
+                    f.write(f"- {sample}\n")
+                f.write("\n" + "-"*50 + "\n")
+
+        # Créer et sauvegarder les visualisations
+        fig_stats = plot_cluster_statistics(cluster_stats)
+        fig_stats.savefig(output_dir / "cluster_statistics.png", bbox_inches='tight', dpi=300)
+        plt.close()
+        
+        print(f"   ✓ Analyse des clusters sauvegardée dans {output_dir}")
+        
+    except Exception as e:
+        print(f"Erreur lors de l'analyse des clusters: {str(e)}")
+        raise
+
 def plot_cluster_statistics(cluster_stats: Dict) -> plt.Figure:
     """
     Crée une visualisation des statistiques des clusters.
@@ -505,50 +513,4 @@ def plot_cluster_statistics(cluster_stats: Dict) -> plt.Figure:
         print(f"Erreur lors de la création du graphique des clusters: {str(e)}")
         raise
 
-def analyze_and_save_clusters(output_dir: Path) -> None:
-    """
-    Analyse et sauvegarde les statistiques des clusters.
-    """
-    try:
-        # Le nombre de clusters sera automatiquement ajusté dans analyze_sample_clusters
-        cluster_stats = analyze_sample_clusters(output_dir, n_clusters=3)
-        
-        # Sauvegarder l'analyse textuelle
-        with open(output_dir / "cluster_analysis.txt", "w", encoding='utf-8') as f:
-            f.write("Analyse des clusters d'échantillons\n")
-            f.write("================================\n\n")
-            
-            # Statistiques globales
-            total_samples = sum(stats['n_samples'] for stats in cluster_stats.values())
-            avg_molecules_global = np.mean([stats['avg_molecules_per_sample'] 
-                                          for stats in cluster_stats.values()])
-            
-            f.write(f"Statistiques globales:\n")
-            f.write(f"- Nombre total d'échantillons: {total_samples}\n")
-            f.write(f"- Moyenne globale de molécules par échantillon: {avg_molecules_global:.1f}\n\n")
-            
-            # Détails par cluster
-            for cluster_name, stats in cluster_stats.items():
-                f.write(f"\n{cluster_name}:\n")
-                f.write(f"Nombre d'échantillons: {stats['n_samples']}\n")
-                f.write(f"Moyenne de molécules par échantillon: {stats['avg_molecules_per_sample']:.1f}\n")
-                
-                f.write("\nMolécules caractéristiques:\n")
-                for idx, molecule in enumerate(stats['characteristic_molecules'][:10], 1):
-                    f.write(f"{idx}. {molecule}\n")
-                
-                f.write("\nÉchantillons dans ce cluster:\n")
-                for sample in sorted(stats['samples']):
-                    f.write(f"- {sample}\n")
-                f.write("\n" + "-"*50 + "\n")
 
-        # Créer et sauvegarder les visualisations
-        fig_stats = plot_cluster_statistics(cluster_stats)
-        fig_stats.savefig(output_dir / "cluster_statistics.png", bbox_inches='tight', dpi=300)
-        plt.close()
-        
-        print(f"   ✓ Analyse des clusters sauvegardée dans {output_dir}")
-        
-    except Exception as e:
-        print(f"Erreur lors de l'analyse des clusters: {str(e)}")
-        raise

@@ -131,7 +131,6 @@ def process_blank_files(blank_files: List[Path]) -> pd.DataFrame:
         
     return blank_peaks
 
-# Définir les fonctions de visualisation au niveau global
 def generate_molecules_per_sample(output_dir: Path):
     fig = plot_unique_molecules_per_sample(output_dir)
     fig.savefig(output_dir / "molecules_per_sample.png", bbox_inches='tight', dpi=300)
@@ -182,14 +181,15 @@ def generate_level123_heatmap(output_dir: Path):
 def generate_tics(output_dir: Path):
     plot_tics_interactive(Path("data/input/samples"), output_dir)
 
+
 def generate_visualizations(output_dir: Path) -> None:
     """Génère toutes les visualisations de la pipeline en parallèle."""
     try:
-        print("\n📊 Génération des visualisations en parallèle...")
+        print("\n📊 Génération des visualisations...")
         output_dir.mkdir(exist_ok=True)
         
-        # Les fichiers d'identifications sont dans output_dir/feature_matrix/
-        identifications_file = output_dir / "feature_matrix" / "feature_identifications.parquet"
+        # Vérifier l'existence du fichier d'identifications dans le sous-dossier feature_matrix
+        identifications_file = output_dir / "feature_matrix" / "features_complete.parquet"
         if not identifications_file.exists():
             raise FileNotFoundError(f"Fichier d'identifications non trouvé: {identifications_file}")
 
@@ -207,6 +207,7 @@ def generate_visualizations(output_dir: Path) -> None:
 
         # Exécution parallèle des tâches
         max_workers = min(mp.cpu_count(), len(tasks))
+
         futures_to_task = {}
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             # Soumettre toutes les tâches
@@ -229,6 +230,7 @@ def generate_visualizations(output_dir: Path) -> None:
     except Exception as e:
         print(f"❌ Erreur lors de la création des visualisations: {str(e)}")
         raise
+
 
 def process_single_sample(
     args: Tuple[str, List[Path], pd.DataFrame, CCSCalibrator, Path]
