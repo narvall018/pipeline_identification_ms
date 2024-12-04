@@ -1,3 +1,6 @@
+#scripts/processing/replicate_processing.py
+#-*- coding:utf-8 -*-
+
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -37,88 +40,6 @@ def process_replicates(replicate_files: List[Path]) -> Tuple[Dict[str, pd.DataFr
             print(f"   ✗ Erreur avec {rep_file.stem}: {str(e)}")
     
     return all_peaks, initial_peak_counts
-
-
-
-
-# def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame: ## DBSCAN ##
-#     """Cluster les pics entre réplicats et calcule les valeurs représentatives"""
-#     # Si un seul réplicat, retourner directement ses pics
-#     if len(peaks_dict) == 1:
-#         return list(peaks_dict.values())[0]
-    
-#     # Combiner tous les réplicats
-#     all_peaks = []
-#     for rep_name, peaks in peaks_dict.items():
-#         peaks_copy = peaks.copy()
-#         peaks_copy['replicate'] = rep_name
-#         all_peaks.append(peaks_copy)
-    
-#     combined_peaks = pd.concat(all_peaks, ignore_index=True)
-    
-#     if len(combined_peaks) == 0:
-#         return pd.DataFrame()
-    
-#     # Critères pour le clustering
-#     total_replicates = len(peaks_dict)
-#     min_required = 2 if total_replicates == 3 else total_replicates  # 2/3 ou 2/2
-    
-#     # Préparation pour DBSCAN
-#     X = combined_peaks[['mz', 'drift_time', 'retention_time']].values
-    
-#     # Tolérances
-#     mz_tolerance = np.median(X[:, 0]) * 1e-4  # 0.1 ppm
-#     dt_tolerance = np.median(X[:, 1]) * 0.10   # 10%
-#     rt_tolerance = 0.20                        # 0.2 min
-    
-#     # Normalisation
-#     X_scaled = np.zeros_like(X)
-#     X_scaled[:, 0] = X[:, 0] / mz_tolerance
-#     X_scaled[:, 1] = X[:, 1] / dt_tolerance
-#     X_scaled[:, 2] = X[:, 2] / rt_tolerance
-    
-#     # Clustering
-#     clusters = DBSCAN(eps=1.0, min_samples=min_required).fit_predict(X_scaled)
-#     combined_peaks['cluster'] = clusters
-    
-#     # Traitement des clusters
-#     result = []
-#     for cluster_id in sorted(set(clusters)):
-#         if cluster_id == -1:
-#             continue
-            
-#         cluster_data = combined_peaks[combined_peaks['cluster'] == cluster_id]
-#         n_replicates = cluster_data['replicate'].nunique()
-        
-#         # Vérification des critères 2/2 ou 2/3
-#         if ((total_replicates == 2 and n_replicates == 2) or  # 2/2
-#             (total_replicates == 3 and n_replicates >= 2)):   # 2/3
-            
-#             # NOUVEAU: Calcul des valeurs représentatives
-#             representative = {
-#                 'mz': cluster_data['mz'].mean(),              # Moyenne mz
-#                 'drift_time': cluster_data['drift_time'].mean(),  # Moyenne drift time
-#                 'retention_time': cluster_data['retention_time'].mean(),  # Moyenne RT
-#                 'intensity': cluster_data['intensity'].max(),  # Maximum intensity
-#                 'CCS': cluster_data['CCS'].mean() if 'CCS' in cluster_data.columns else None,  # Moyenne CCS si présent
-#                 'n_replicates': n_replicates
-#             }
-            
-#             # Ajouter les autres colonnes si présentes
-#             for col in cluster_data.columns:
-#                 if col not in ['mz', 'drift_time', 'retention_time', 'intensity', 'CCS', 'cluster', 'replicate']:
-#                     representative[col] = cluster_data[col].iloc[0]
-            
-#             result.append(representative)
-    
-#     result_df = pd.DataFrame(result) if result else pd.DataFrame()
-    
-#     if not result_df.empty:
-#         result_df = result_df.sort_values('intensity', ascending=False)
-    
-#     return result_df
-
-
 
 
 def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
