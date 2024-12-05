@@ -520,3 +520,176 @@ def plot_cluster_statistics(cluster_stats: Dict) -> plt.Figure:
         raise
 
 
+def plot_categories_distribution_by_level(output_dir: Union[str, Path], 
+                                        confidence_levels: List[int],
+                                        title_suffix: str = "") -> plt.Figure:
+    """
+    Génère un graphique montrant la distribution des catégories par échantillon pour des niveaux de confiance spécifiques.
+    """
+    try:
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
+        
+        categories_data = []
+        for _, row in merged_df.iterrows():
+            if row['confidence_level'] not in confidence_levels:
+                continue
+                
+            try:
+                # Extraire les catégories
+                if isinstance(row['categories'], str):
+                    cats = eval(row['categories'])
+                elif isinstance(row['categories'], list):
+                    cats = row['categories']
+                elif hasattr(row['categories'], 'tolist'):
+                    cats = row['categories'].tolist()
+                else:
+                    continue
+                
+                # Pour chaque échantillon
+                for sample in row['samples'].split(','):
+                    if isinstance(cats, list):
+                        for category in cats:
+                            categories_data.append({
+                                'sample': sample,
+                                'category': category,
+                                'confidence_level': row['confidence_level']
+                            })
+            except (ValueError, SyntaxError):
+                continue
+        
+        if not categories_data:
+            raise ValueError(f"Aucune donnée de catégorie trouvée pour les niveaux {confidence_levels}")
+            
+        cat_df = pd.DataFrame(categories_data)
+        
+        # Créer le graphique
+        plt.figure(figsize=(15, 8))
+        
+        samples = sorted(cat_df['sample'].unique())
+        categories = sorted(cat_df['category'].unique())
+        
+        x_positions = np.arange(len(samples))
+        width = 0.8 / len(categories)  # Ajuster la largeur en fonction du nombre de catégories
+        
+        colors = plt.cm.Set3(np.linspace(0, 1, len(categories)))
+        
+        # Pour chaque catégorie
+        for i, category in enumerate(categories):
+            heights = []
+            for sample in samples:
+                count = len(cat_df[(cat_df['sample'] == sample) & 
+                                 (cat_df['category'] == category)])
+                heights.append(count)
+            
+            x = x_positions + i * width
+            plt.bar(x, heights, width, label=category, color=colors[i], alpha=0.8)
+        
+        plt.xlabel('Échantillons')
+        plt.ylabel('Nombre de molécules')
+        levels_text = f"niveau{'s' if len(confidence_levels) > 1 else ''} {', '.join(map(str, confidence_levels))}"
+        plt.title(f'Distribution des catégories par échantillon - {levels_text}{title_suffix}')
+        plt.xticks(x_positions + width * len(categories)/2, samples, rotation=45)
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True, alpha=0.3, linestyle='--')
+        plt.tight_layout()
+        
+        return plt.gcf()
+        
+    except Exception as e:
+        print(f"Erreur lors de la création du graphique des catégories: {str(e)}")
+        raise
+
+def plot_categories_pie_charts(output_dir: Union[str, Path]) -> None:
+    """
+    Génère des diagrammes circulaires pour montrer la distribution des catégories
+    pour différents niveaux de confiance.
+    """
+    try:
+        merged_df = pd.read_parquet(Path(output_dir) / "feature_matrix" / "features_complete.parquet")
+        
+        # Créer trois subplots pour les différentes combinaisons de niveaux
+        fig, axs = plt.subplots(1, 3, figsize=(20, 7))
+        
+        level_combinations = [
+            ([1], "Niveau 1"),
+            ([1, 2], "Niveaux 1-2"),
+            ([1, 2, 3], "Niveaux 1-2-3")
+        ]
+        
+        for idx, (levels, title) in enumerate(level_combinations):
+            categories_count = {}
+            filtered_df = merged_df[merged_df['confidence_level'].isin(levels)]
+            
+            for _, row in filtered_df.iterrows():
+                try:
+                    if isinstance(row['categories'], str):
+                        cats = eval(row['categories'])
+                    elif isinstance(row['categories'], list):
+                        cats = row['categories']
+                    elif hasattr(row['categories'], 'tolist'):
+                        cats = row['categories'].tolist()
+                    else:
+                        continue
+                        
+                    if isinstance(cats, list):
+                        for cat in cats:
+                            categories_count[cat] = categories_count.get(cat, 0) + 1
+                except (ValueError, SyntaxError):
+                    continue
+            
+            if categories_count:
+                # Trier par valeur décroissante
+                categories_count = dict(sorted(categories_count.items(), key=lambda x: x[1], reverse=True))
+                
+                # Créer le camembert
+                wedges, texts, autotexts = axs[idx].pie(
+                    categories_count.values(),
+                    labels=categories_count.keys(),
+                    autopct='%1.1f%%',
+                    colors=plt.cm.Set3(np.linspace(0, 1, len(categories_count))),
+                    textprops={'fontsize': 8}
+                )
+                
+                # Ajuster la taille des labels
+                plt.setp(texts, size=8)
+                plt.setp(autotexts, size=8)
+                
+                axs[idx].set_title(title)
+            else:
+                axs[idx].text(0.5, 0.5, 'Aucune donnée', 
+                            ha='center', va='center')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / "categories_pie_charts.png", bbox_inches='tight', dpi=300)
+        plt.close()
+        
+    except Exception as e:
+        print(f"Erreur lors de la création des camemberts: {str(e)}")
+        raise
+
+def analyze_categories(output_dir: Path) -> None:
+    """
+    Analyse et sauvegarde toutes les visualisations des catégories.
+    """
+    try:
+        # Générer les distributions pour différents niveaux
+        fig1 = plot_categories_distribution_by_level(output_dir, [1], " - Niveau 1")
+        fig1.savefig(output_dir / "categories_distribution_level1.png", bbox_inches='tight', dpi=300)
+        plt.close(fig1)
+
+        fig2 = plot_categories_distribution_by_level(output_dir, [1, 2], " - Niveaux 1-2")
+        fig2.savefig(output_dir / "categories_distribution_level12.png", bbox_inches='tight', dpi=300)
+        plt.close(fig2)
+
+        fig3 = plot_categories_distribution_by_level(output_dir, [1, 2, 3], " - Niveaux 1-2-3")
+        fig3.savefig(output_dir / "categories_distribution_level123.png", bbox_inches='tight', dpi=300)
+        plt.close(fig3)
+
+        # Générer les camemberts
+        plot_categories_pie_charts(output_dir)
+        
+        print(f"   ✓ Visualisations des catégories sauvegardées dans {output_dir}")
+        
+    except Exception as e:
+        print(f"Erreur lors de l'analyse des catégories: {str(e)}")
+        raise

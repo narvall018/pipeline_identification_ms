@@ -282,6 +282,7 @@ def find_matches_window(
                         'match_name': match.Name,
                         'match_adduct': match.adduct,
                         'match_smiles': match.SMILES,
+                        'categories': match.categories,
                         'match_mz': match.mz,
                         'mz_error_ppm': (peak.mz - match.mz) / match.mz * 1e6,
                         'match_ccs_exp': match.ccs_exp,

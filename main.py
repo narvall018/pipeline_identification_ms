@@ -31,7 +31,8 @@ from scripts.visualization.plotting import (
     analyze_sample_clusters,
     plot_cluster_statistics,
     analyze_and_save_clusters,
-    plot_tics_interactive
+    plot_tics_interactive,
+    analyze_categories
 )
 from scripts.utils.replicate_handling import group_replicates
 from scripts.processing.replicate_processing import process_sample_with_replicates
@@ -485,6 +486,12 @@ def main() -> None:
         print("\n📊 Analyse des clusters d'échantillons...")
         analyze_and_save_clusters(output_dir)
 
+        print("\n" + "="*80)
+        print("ANALYSE DES CATÉGORIES")
+        print("="*80)
+    
+        print("\n📊 Analyse des catégories de molécules...")
+        analyze_categories(output_dir)
 
         total_time = time.time() - start_time
         minutes = int(total_time // 60)
