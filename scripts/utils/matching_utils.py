@@ -292,7 +292,10 @@ def find_matches_window(
                         'rt_error_min': rt_error,
                         'ccs_error_percent': ccs_error,
                         'has_ms2_db': match.has_ms2_db,
-                        'molecule_id': match.molecule_id
+                        'molecule_id': match.molecule_id,
+                        'daphnia_LC50_48_hr_ug/L': float(matches.iloc[match.Index]['LC50_48_hr_ug/L']) if pd.notna(matches.iloc[match.Index]['LC50_48_hr_ug/L']) else None,
+                        'algae_EC50_72_hr_ug/L': float(matches.iloc[match.Index]['EC50_72_hr_ug/L']) if pd.notna(matches.iloc[match.Index]['EC50_72_hr_ug/L']) else None,
+                        'pimephales_LC50_96_hr_ug/L': float(matches.iloc[match.Index]['LC50_96_hr_ug/L']) if pd.notna(matches.iloc[match.Index]['LC50_96_hr_ug/L']) else None
                     }
 
                     # Calcul des scores et du niveau de confiance
