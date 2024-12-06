@@ -46,7 +46,14 @@ features <- suppressWarnings(read_parquet(features_path))
 calib_samples <- suppressWarnings(fread(calib_samples_path, showProgress = FALSE))
 calibrant_names <- unique(calib_samples$Name)
 
-# Préparer les données de calibration
+# Définir les colonnes de toxicité
+toxicity_columns <- c(
+  'daphnia_LC50_48_hr_ug/L',
+  'algae_EC50_72_hr_ug/L',
+  'pimephales_LC50_96_hr_ug/L'
+)
+
+# Préparer les données de calibration avec les informations de toxicité
 calibrants_adapted <- suppressWarnings(
   calibrants %>%
     mutate(
@@ -56,7 +63,11 @@ calibrants_adapted <- suppressWarnings(
     ) %>%
     group_by(identifier) %>%
     filter(n() == 5) %>%
-    ungroup()
+    ungroup() %>%
+    select(
+      identifier, SMILES, retention_time, area, conc_M,
+      all_of(toxicity_columns)
+    )
 )
 
 # Obtenir la liste des échantillons à traiter
@@ -87,34 +98,30 @@ for(sample in samples_to_process) {
     sink(temp_log, type = "output")
     sink(temp_log, type = "message")
     
-  identification_samples <- features %>%
-  filter(
-    confidence_level == 1,
-    str_detect(samples, sample)
-  ) %>%
-  mutate(
-    identifier = match_name,
-    SMILES = match_smiles,
-    retention_time = retention_time,
-    area = intensity,
-    conc_M = NA,
-    daphnia_LC50 = daphnia_LC50_48_hr_ug/L,
-    algae_EC50 = algae_EC50_72_hr_ug/L,
-    pimephales_LC50 = pimephales_LC50_96_hr_ug/L
-  ) %>%
-  select(
-    identifier, SMILES, retention_time, area, conc_M,
-    daphnia_LC50, algae_EC50, pimephales_LC50
-  ) %>%
-  distinct()
+    # Préparer les données d'identification avec les informations de toxicité
+    identification_samples <- features %>%
+      filter(
+        confidence_level == 1,
+        str_detect(samples, sample)
+      ) %>%
+      mutate(
+        identifier = match_name,
+        SMILES = match_smiles,
+        retention_time = retention_time,
+        area = intensity,
+        conc_M = NA
+      ) %>%
+      select(
+        identifier, SMILES, retention_time, area, conc_M,
+        all_of(toxicity_columns)
+      ) %>%
+      distinct()
 
-  # Combiner avec les calibrants
-  data_combined <- bind_rows(
-    calibrants_adapted %>%
-      select(identifier, SMILES, retention_time, area, conc_M,
-             daphnia_LC50, algae_EC50, pimephales_LC50),
-    identification_samples
-  )
+    # Combiner avec les calibrants en conservant les colonnes de toxicité
+    data_combined <- bind_rows(
+      calibrants_adapted,
+      identification_samples
+    )
     
     # Exécuter MS2Quant
     MS2Quant_results <- MS2Quant_quantify(data_combined,
@@ -127,8 +134,17 @@ for(sample in samples_to_process) {
     sink(type = "message")
     close(temp_log)
     
-    # Sauvegarder les résultats
-    write.csv(MS2Quant_results$suspects_concentrations,
+    # Ajouter les informations de toxicité aux résultats de quantification
+    # et garder une seule occurrence par molécule
+    final_results <- MS2Quant_results$suspects_concentrations %>%
+      left_join(
+        data_combined %>% select(identifier, all_of(toxicity_columns)),
+        by = "identifier"
+      ) %>%
+      distinct(identifier, .keep_all = TRUE)  # Garde une seule ligne par identifiant
+    
+    # Sauvegarder les résultats avec les informations de toxicité
+    write.csv(final_results,
               file.path(sample_results_dir, paste0(sample, "_quantification.csv")),
               row.names = FALSE)
     

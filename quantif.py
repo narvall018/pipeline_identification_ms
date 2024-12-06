@@ -2,8 +2,18 @@
 
 from pathlib import Path
 import subprocess
+import sys
+import os
+
+# Ajoutez le dossier courant au PYTHONPATH
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
 from scripts.quantification.compound_recovery import get_compound_summary
 from scripts.visualization.plot_concentrations import plot_top_concentrations
+
+# Import direct depuis le dossier scripts/quantification/
+from scripts.quantification.calculate_rqmix import calculate_rqmix
 
 def find_csv_file(directory: Path) -> Path:
     """Trouve le premier fichier CSV dans un dossier."""
@@ -57,8 +67,13 @@ def main() -> None:
             print("\n🧪 Lancement de l'analyse MS2Quant...")
             if run_r_script():
                 print("   ✓ Analyse MS2Quant terminée")
+
+                # 3. Calcul du RQMIX
+                print("\n📊 Calcul des RQmix...")
+                calculate_rqmix(output_dir / "samples_quantification", output_dir)
+                print("   ✓ Calcul RQmix terminé")
                 
-                # 3. Visualisation des résultats
+                # 4. Visualisation des résultats
                 print("\n📊 Génération des visualisations...")
                 quant_dir = output_dir / "samples_quantification"
                 plot_top_concentrations(quant_dir, output_dir)
