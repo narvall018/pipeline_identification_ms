@@ -1,27 +1,44 @@
-# quantif.py
+# scripts/quantification/quantif.py
 
 from pathlib import Path
 import subprocess
 from scripts.quantification.compound_recovery import get_compound_summary
+from scripts.visualization.plot_concentrations import plot_top_concentrations
 
 def find_csv_file(directory: Path) -> Path:
+    """Trouve le premier fichier CSV dans un dossier."""
     csv_files = list(directory.glob("*.csv"))
     if not csv_files:
         raise FileNotFoundError(f"Aucun fichier CSV trouvé dans {directory}")
     return csv_files[0]
 
-def main():
-    # Chemins
+def run_r_script() -> bool:
+    """Lance le script R de MS2Quant."""
+    r_script_path = Path("scripts/quantification/ms2quant_analysis.R")
+    try:
+        subprocess.run(["Rscript", str(r_script_path)], check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Erreur lors de l'exécution du script R")
+        return False
+
+def main() -> None:
+    """Point d'entrée principal pour la quantification."""
+    # Définition des chemins
     compounds_dir = Path("data/input/calibrants/compounds")
     calibration_dir = Path("data/input/calibrants/samples")
     output_dir = Path("output/quantification")
     input_dir = Path("output")
-    r_script_path = Path("scripts/quantification/ms2quant_analysis.R")
+    
+    print("\n" + "="*80)
+    print("QUANTIFICATION DES ÉCHANTILLONS")
+    print("="*80)
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # Étape 1: Préparation des données avec Python
+        # 1. Préparation des données
+        print("\n🔍 Préparation des données...")
         compounds_file = find_csv_file(compounds_dir)
         calibration_file = find_csv_file(calibration_dir)
         
@@ -34,17 +51,25 @@ def main():
         
         if not summary_df.empty:
             summary_df.to_csv(output_dir / "compounds_summary.csv", index=False)
-            print(f"✅ Données préparées dans {output_dir}")
+            print(f"   ✓ Données préparées dans {output_dir}")
             
-            # Étape 2: Analyse MS2Quant avec R
-            try:
-                subprocess.run(["Rscript", str(r_script_path)], check=True)
-                print("✅ Analyse MS2Quant terminée")
-            except subprocess.CalledProcessError:
-                print("❌ Erreur lors de l'exécution du script R")
+            # 2. Analyse MS2Quant
+            print("\n🧪 Lancement de l'analyse MS2Quant...")
+            if run_r_script():
+                print("   ✓ Analyse MS2Quant terminée")
+                
+                # 3. Visualisation des résultats
+                print("\n📊 Génération des visualisations...")
+                quant_dir = output_dir / "samples_quantification"
+                plot_top_concentrations(quant_dir, output_dir)
+                
+                print("\n✅ Quantification terminée avec succès")
             
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as e:
+        print(f"\n❌ Erreur: {str(e)}")
+    except Exception as e:
+        print(f"\n❌ Erreur inattendue: {str(e)}")
 
 if __name__ == "__main__":
     main()
+    
