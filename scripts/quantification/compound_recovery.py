@@ -62,7 +62,10 @@ def get_best_adduct_intensities(
                     'Sample': sample,
                     'conc_M': calibration_df.loc[calibration_df['Sample'] == sample, 'conc_M'].iloc[0],
                     'Intensity': intensity,
-                    'Confidence_Level': best_match['confidence_level']
+                    'Confidence_Level': best_match['confidence_level'],
+                    'daphnia_LC50_48_hr_ug/L': best_match.get('daphnia_LC50_48_hr_ug/L'),
+                    'algae_EC50_72_hr_ug/L': best_match.get('algae_EC50_72_hr_ug/L'),
+                    'pimephales_LC50_96_hr_ug/L': best_match.get('pimephales_LC50_96_hr_ug/L')
                 })
     
     if not results:
@@ -70,11 +73,15 @@ def get_best_adduct_intensities(
         
     df = pd.DataFrame(results)
     
-    columns = ['Compound', 'SMILES', 'Feature_ID', 'Adduct', 'RT', 'DT', 
-               'CCS', 'Total_Samples', 'Sample', 'conc_M', 'Intensity', 'Confidence_Level']
+    columns = [
+        'Compound', 'SMILES', 'Feature_ID', 'Adduct', 'RT', 'DT', 
+        'CCS', 'Total_Samples', 'Sample', 'conc_M', 'Intensity', 
+        'Confidence_Level', 'daphnia_LC50_48_hr_ug/L', 'algae_EC50_72_hr_ug/L', 
+        'pimephales_LC50_96_hr_ug/L'
+    ]
     
     return df[columns]
-
+    
 def get_compound_summary(
     input_dir: Path,
     compounds_file: Path,

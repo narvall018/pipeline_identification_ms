@@ -87,28 +87,34 @@ for(sample in samples_to_process) {
     sink(temp_log, type = "output")
     sink(temp_log, type = "message")
     
-    # Préparer les données d'identification
-    identification_samples <- features %>%
-      filter(
-        confidence_level == 1,
-        str_detect(samples, sample)
-      ) %>%
-      mutate(
-        identifier = match_name,
-        SMILES = match_smiles,
-        retention_time = retention_time,
-        area = intensity,
-        conc_M = NA
-      ) %>%
-      select(identifier, SMILES, retention_time, area, conc_M) %>%
-      distinct()
-    
-    # Combiner avec les calibrants
-    data_combined <- bind_rows(
-      calibrants_adapted %>%
-        select(identifier, SMILES, retention_time, area, conc_M),
-      identification_samples
-    )
+  identification_samples <- features %>%
+  filter(
+    confidence_level == 1,
+    str_detect(samples, sample)
+  ) %>%
+  mutate(
+    identifier = match_name,
+    SMILES = match_smiles,
+    retention_time = retention_time,
+    area = intensity,
+    conc_M = NA,
+    daphnia_LC50 = daphnia_LC50_48_hr_ug/L,
+    algae_EC50 = algae_EC50_72_hr_ug/L,
+    pimephales_LC50 = pimephales_LC50_96_hr_ug/L
+  ) %>%
+  select(
+    identifier, SMILES, retention_time, area, conc_M,
+    daphnia_LC50, algae_EC50, pimephales_LC50
+  ) %>%
+  distinct()
+
+  # Combiner avec les calibrants
+  data_combined <- bind_rows(
+    calibrants_adapted %>%
+      select(identifier, SMILES, retention_time, area, conc_M,
+             daphnia_LC50, algae_EC50, pimephales_LC50),
+    identification_samples
+  )
     
     # Exécuter MS2Quant
     MS2Quant_results <- MS2Quant_quantify(data_combined,
