@@ -21,13 +21,9 @@ def load_calibration_samples(calibration_file: Path) -> pd.DataFrame:
 def process_all_data(
     features_df: pd.DataFrame,
     feature_matrix_df: pd.DataFrame,
-    target_compounds: List[str],
     calibration_df: pd.DataFrame
 ) -> pd.DataFrame:
-    """Traite les données pour tous les échantillons:
-    - Pour les échantillons de calibration: inclut composés cibles avec concentrations
-    - Pour tous les échantillons: inclut toutes les molécules de niveau 1
-    """
+    """Traite les données pour tous les échantillons en gardant l'intensité maximale."""
     results = []
     
     # On traite tous les composés de niveau 1
@@ -44,9 +40,9 @@ def process_all_data(
             # On vérifie si c'est un échantillon de calibration
             is_calibration = sample in calibration_df['Sample'].values
             
-            # Pour les composés cibles dans les échantillons de calibration, on récupère la concentration
+            # Pour les composés dans les échantillons de calibration, on récupère la concentration
             conc_val = None
-            if is_calibration and compound in target_compounds:
+            if is_calibration:
                 conc_val = calibration_df.loc[calibration_df['Sample'] == sample, 'conc_M'].iloc[0]
             
             intensity = feature_matrix_df.loc[sample, feature_id] if sample in feature_matrix_df.index and feature_id in feature_matrix_df.columns else None
@@ -59,7 +55,6 @@ def process_all_data(
                 'RT': match_row['retention_time'],
                 'DT': match_row['drift_time'],
                 'CCS': match_row['CCS'],
-                'Total_Samples': len(samples),
                 'Sample': sample,
                 'Is_Calibration': is_calibration,
                 'conc_M': conc_val,
@@ -67,18 +62,28 @@ def process_all_data(
                 'Confidence_Level': match_row['confidence_level'],
                 'daphnia_LC50_48_hr_ug/L': match_row.get('daphnia_LC50_48_hr_ug/L'),
                 'algae_EC50_72_hr_ug/L': match_row.get('algae_EC50_72_hr_ug/L'),
-                'pimephales_LC50_96_hr_ug/L': match_row.get('pimephales_LC50_96_hr_ug/L'),
-                'Is_Target': compound in target_compounds
+                'pimephales_LC50_96_hr_ug/L': match_row.get('pimephales_LC50_96_hr_ug/L')
             })
     
-    return pd.DataFrame(results)
+    # Convertir en DataFrame
+    results_df = pd.DataFrame(results)
+    
+    if results_df.empty:
+        return pd.DataFrame()
+    
+    # Garder seulement l'intensité maximale pour chaque composé dans chaque échantillon
+    max_intensity_df = results_df.loc[
+        results_df.groupby(['Compound', 'Sample'])['Intensity'].idxmax()
+    ]
+    
+    return max_intensity_df
 
 def get_compound_summary(
     input_dir: Path,
     compounds_file: Path,
     calibration_file: Optional[Path] = None
 ) -> pd.DataFrame:
-    """Génère un résumé complet des composés."""
+    """Génère un résumé des composés avec intensité maximale."""
     # Charger les données
     features_df = pd.read_parquet(input_dir / "feature_matrix/features_complete.parquet")
     feature_matrix_df = pd.read_parquet(input_dir / "feature_matrix/feature_matrix.parquet")
@@ -94,19 +99,20 @@ def get_compound_summary(
     results_df = process_all_data(
         features_df,
         feature_matrix_df,
-        target_compounds,
         calibration_df
     )
     
     if results_df.empty:
         return pd.DataFrame()
     
+    # Réorganiser les colonnes avec Compound, Sample, Adduct en premier
     columns = [
-        'Compound', 'SMILES', 'Feature_ID', 'Adduct', 'RT', 'DT', 
-        'CCS', 'Total_Samples', 'Sample', 'Is_Calibration', 'conc_M', 
-        'Intensity', 'Confidence_Level', 'Is_Target',
+        'Compound', 'Sample', 'Adduct',  # Colonnes prioritaires
+        'SMILES', 'Feature_ID', 'RT', 'DT', 
+        'CCS', 'Is_Calibration', 'conc_M', 
+        'Intensity', 'Confidence_Level',
         'daphnia_LC50_48_hr_ug/L', 'algae_EC50_72_hr_ug/L', 
         'pimephales_LC50_96_hr_ug/L'
     ]
     
-    return results_df[columns].sort_values(['Compound', 'Sample', 'Adduct'])
+    return results_df[columns].sort_values(['Compound', 'Sample'])
