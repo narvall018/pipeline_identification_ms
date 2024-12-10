@@ -109,4 +109,4 @@ def get_compound_summary(
         'pimephales_LC50_96_hr_ug/L'
     ]
     
-    return results_df[columns].sort_values(['Sample', 'Compound', 'Adduct'])
+    return results_df[columns].sort_values(['Compound', 'Sample', 'Adduct'])
