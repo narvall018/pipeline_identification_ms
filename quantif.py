@@ -56,7 +56,6 @@ def main() -> None:
             input_dir=input_dir,
             compounds_file=compounds_file,
             calibration_file=calibration_file,
-            min_samples=4
         )
         
         if not summary_df.empty:
