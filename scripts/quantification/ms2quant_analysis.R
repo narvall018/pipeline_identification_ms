@@ -3,178 +3,170 @@
 # Supprimer tous les messages et avertissements
 options(warn = -1)
 options(dplyr.show_progress = FALSE)
+options(readr.show_progress = FALSE)
+Sys.setenv(XGBOOST_WARNING = 0)
 
-# Rediriger les sorties vers null
-log_null <- file("/dev/null", open = "wt")
-sink(log_null, type = "output")
-sink(log_null, type = "message")
+# Fonction pour calculer la masse molaire selon l'adduit
+get_adduct_mass <- function(adduct) {
+  switch(adduct,
+         "[M+H]+" = 1.007825,
+         "[M+Na]+" = 22.989769,
+         "[M+NH4]+" = 18.034374,
+         1.007825)  # Défaut pour [M+H]+
+}
 
-# Charger les packages silencieusement
+# Fonction pour calculer la concentration en g/L
+calculate_concentration <- function(molar_concentration, mz, adduct) {
+  adduct_mass <- get_adduct_mass(adduct)
+  molecular_mass <- mz - adduct_mass
+  return(molar_concentration * molecular_mass)
+}
+
+# Fonction pour gérer proprement la redirection des sorties
+redirect_output <- function(expr) {
+  temp_log <- file("/dev/null", open = "wt")
+  sink(temp_log, type = "message")
+  sink(temp_log, type = "output")
+  
+  result <- tryCatch({
+    expr
+  }, finally = {
+    suppressWarnings({
+      sink(type = "message", NULL)
+      sink(type = "output", NULL)
+      close(temp_log)
+    })
+  })
+  
+  return(result)
+}
+
 suppressPackageStartupMessages({
   library(data.table)
   library(dplyr)
   library(MS2Quant)
-  library(arrow)
   library(stringr)
   library(ggplot2)
 })
 
-# Restaurer la sortie standard
-sink(type = "output")
-sink(type = "message")
-close(log_null)
+# Chemins des fichiers et dossiers
+output_root <- "output/quantification"
+data_summary_path <- file.path(output_root, "compounds_summary.csv")
+eluent_file_path <- "data/input/calibrants/eluents/eluent_leesu.csv"
+results_dir <- file.path(output_root, "samples_quantification")
+model_dir <- file.path(output_root, "model_info")
+plots_dir <- file.path(output_root, "calibration_plots")
 
-# Chemins
-base_dir <- "data/input/calibrants"
-output_dir <- "output/quantification"
-compounds_summary_path <- file.path(output_dir, "compounds_summary.csv")
-features_path <- file.path("output/feature_matrix/features_complete.parquet")
-path_eluent_file <- file.path(base_dir, "eluents/eluent_leesu.csv")
-calib_samples_path <- file.path(base_dir, "samples/calibrants_samples.csv")
+# Création des dossiers
+invisible(sapply(c(results_dir, model_dir, plots_dir), 
+                dir.create, recursive = TRUE, showWarnings = FALSE))
 
-# Créer les sous-dossiers
-sample_results_dir <- file.path(output_dir, "samples_quantification")
-model_info_dir <- file.path(output_dir, "model_info")
-plots_dir <- file.path(output_dir, "plots")
-dir.create(sample_results_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(model_info_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(plots_dir, recursive = TRUE, showWarnings = FALSE)
+# Lecture des données
+compounds_data <- suppressWarnings(fread(data_summary_path, showProgress = FALSE))
 
-# Charger les données silencieusement
-calibrants <- suppressWarnings(fread(compounds_summary_path, showProgress = FALSE))
-features <- suppressWarnings(read_parquet(features_path))
-calib_samples <- suppressWarnings(fread(calib_samples_path, showProgress = FALSE))
-calibrant_names <- unique(calib_samples$Name)
+# Identification des calibrants valides (5 points)
+calibration_data <- compounds_data[compounds_data$Is_Calibration == TRUE, ]
+compounds_with_5points <- names(table(calibration_data$Compound)[table(calibration_data$Compound) == 5])
+valid_calibration_data <- calibration_data[calibration_data$Compound %in% compounds_with_5points, ]
 
-# Définir les colonnes de toxicité
-toxicity_columns <- c(
-  'daphnia_LC50_48_hr_ug/L',
-  'algae_EC50_72_hr_ug/L',
-  'pimephales_LC50_96_hr_ug/L'
+# Colonnes à conserver
+selected_columns <- c(
+  "identifier", "conc_M", "conc", "logRF_pred", "area", "mz", "RT", "DT", "CCS",
+  "Adduct", "SMILES", "Feature_ID", "Confidence_Level", 
+  "daphnia_LC50_48_hr_ug/L", "algae_EC50_72_hr_ug/L", 
+  "pimephales_LC50_96_hr_ug/L", "Sample"
 )
 
-# Préparer les données de calibration avec les informations de toxicité
-calibrants_adapted <- suppressWarnings(
-  calibrants %>%
-    mutate(
-      identifier = Compound,
-      area = Intensity,
-      retention_time = RT
-    ) %>%
-    group_by(identifier) %>%
-    filter(n() == 5) %>%
-    ungroup() %>%
-    select(
-      identifier, SMILES, retention_time, area, conc_M,
-      all_of(toxicity_columns)
-    )
-)
+# Liste des échantillons à traiter
+samples_list <- unique(compounds_data[compounds_data$Is_Calibration == FALSE,]$Sample)
+model_is_saved <- FALSE
+quantification_results <- list()
 
-# Obtenir la liste des échantillons à traiter
-samples_to_process <- suppressWarnings(
-  features %>%
-    filter(confidence_level == 1) %>%
-    pull(samples) %>%
-    str_split(",") %>%
-    unlist() %>%
-    str_trim() %>%
-    unique() %>%
-    setdiff(calibrant_names)
-)
-
-# Fonction pour sauvegarder les informations du modèle
-save_model_info <- function(model_summary) {
-  capture.output(
-    print(model_summary),
-    file = file.path(model_info_dir, "calibration_model_summary.txt")
-  )
-}
-
-# Traiter chaque échantillon
-for(sample in samples_to_process) {
-  tryCatch({
-    # Rediriger les sorties vers null pour chaque échantillon
-    temp_log <- file("/dev/null", open = "wt")
-    sink(temp_log, type = "output")
-    sink(temp_log, type = "message")
-    
-    # Préparer les données d'identification avec les informations de toxicité
-    identification_samples <- features %>%
-      filter(
-        confidence_level == 1,
-        str_detect(samples, sample)
-      ) %>%
-      mutate(
-        identifier = match_name,
-        SMILES = match_smiles,
-        retention_time = retention_time,
-        area = intensity,
-        conc_M = NA
-      ) %>%
-      select(
-        identifier, SMILES, retention_time, area, conc_M,
-        all_of(toxicity_columns)
-      ) %>%
-      distinct()
-
-    # Combiner avec les calibrants en conservant les colonnes de toxicité
-    data_combined <- bind_rows(
-      calibrants_adapted,
-      identification_samples
-    )
-    
-    # Exécuter MS2Quant
-    MS2Quant_results <- MS2Quant_quantify(data_combined,
-                                         path_eluent_file,
-                                         organic_modifier = "MeCN",
-                                         pH_aq = 2.7)
-    
-    # Restaurer la sortie standard
-    sink(type = "output")
-    sink(type = "message")
-    close(temp_log)
-    
-    # Ajouter les informations de toxicité aux résultats de quantification
-    # et garder une seule occurrence par molécule
-    final_results <- MS2Quant_results$suspects_concentrations %>%
-      left_join(
-        data_combined %>% select(identifier, all_of(toxicity_columns)),
-        by = "identifier"
-      ) %>%
-      distinct(identifier, .keep_all = TRUE)  # Garde une seule ligne par identifiant
-    
-    # Sauvegarder les résultats avec les informations de toxicité
-    write.csv(final_results,
-              file.path(sample_results_dir, paste0(sample, "_quantification.csv")),
-              row.names = FALSE)
-    
-    # Sauvegarder les informations du modèle (une seule fois)
-    if (!file.exists(file.path(model_info_dir, "calibration_model_summary.txt")) &&
-        !is.null(MS2Quant_results$calibration_linear_model_summary)) {
-      save_model_info(MS2Quant_results$calibration_linear_model_summary)
-    }
-    
-    # Sauvegarder le plot (une seule fois)
-    if (!file.exists(file.path(plots_dir, "calibrants_plot.png")) &&
-        !is.null(MS2Quant_results$calibrants_separate_plots)) {
-      ggsave(
-        file.path(plots_dir, "calibrants_plot.png"), 
-        plot = MS2Quant_results$calibrants_separate_plots,
-        width = 8, 
-        height = 6, 
-        dpi = 300
+for(current_sample in samples_list) {
+  cat(sprintf("Traitement de %s...\n", current_sample))
+  
+  # Données de l'échantillon courant
+  sample_data <- compounds_data[compounds_data$Is_Calibration == FALSE & 
+                               compounds_data$Sample == current_sample, ]
+  
+  # Préparation des données pour MS2Quant
+  ms2quant_data <- rbind(valid_calibration_data, sample_data)
+  ms2quant_data$identifier <- ms2quant_data$Compound
+  ms2quant_data$area <- ms2quant_data$Intensity
+  ms2quant_data$retention_time <- ms2quant_data$RT
+  
+  # Exécution de MS2Quant avec redirection des sorties
+  ms2quant_output <- redirect_output({
+    tryCatch({
+      MS2Quant_quantify(
+        ms2quant_data,
+        eluent_file_path,
+        organic_modifier = "MeCN",
+        pH_aq = 2.7
       )
+    }, error = function(e) {
+      cat(sprintf("❌ Erreur MS2Quant: %s\n", e$message))
+      return(NULL)
+    })
+  })
+  
+  if(!is.null(ms2quant_output)) {
+    # Sauvegarde du modèle (une seule fois)
+    if(!model_is_saved && !is.null(ms2quant_output$calibration_linear_model_summary)) {
+      capture.output(
+        print(ms2quant_output$calibration_linear_model_summary),
+        file = file.path(model_dir, "calibration_model_summary.txt")
+      )
+      
+      if(!is.null(ms2quant_output$calibrants_separate_plots)) {
+        ggsave(
+          file.path(plots_dir, "calibration_plots.png"),
+          ms2quant_output$calibrants_separate_plots,
+          width = 10,
+          height = 8,
+          dpi = 300
+        )
+      }
+      model_is_saved <- TRUE
+      cat("✓ Modèle et plots sauvegardés\n")
     }
     
-    cat("✅ Résultats sauvegardés pour", sample, "\n")
-  }, error = function(e) {
-    sink(type = "output")
-    sink(type = "message")
-    cat("❌ Erreur pour l'échantillon", sample, ":", e$message, "\n")
-  })
+    if(!is.null(ms2quant_output$suspects_concentrations)) {
+      # Préparation des résultats
+      quant_results <- as.data.frame(ms2quant_output$suspects_concentrations)
+      
+      # Calcul des concentrations
+      quant_results$conc <- mapply(
+        calculate_concentration,
+        quant_results$conc_M,
+        sample_data$mz,
+        sample_data$Adduct
+      )
+      
+      # Combinaison et sélection des colonnes
+      final_results <- cbind(quant_results, as.data.frame(sample_data))
+      final_results <- final_results[, intersect(names(final_results), selected_columns)]
+      
+      # Sauvegarde
+      output_file <- file.path(results_dir, paste0(current_sample, "_quantification.csv"))
+      fwrite(as.data.table(final_results), output_file, showProgress = FALSE)
+      cat(sprintf("✓ Résultats sauvegardés: %s\n", output_file))
+      
+      quantification_results[[current_sample]] <- final_results
+    }
+  }
 }
 
-cat("\n✅ Tous les résultats ont été sauvegardés dans", output_dir, "\n")
-cat("  • Quantification:", sample_results_dir, "\n")
-cat("  • Informations des modèles:", model_info_dir, "\n")
-cat("  • Plots de calibration:", plots_dir, "\n")
+# Compilation des résultats
+if(length(quantification_results) > 0) {
+  all_results <- suppressWarnings(rbindlist(lapply(quantification_results, as.data.table), fill = TRUE))
+  summary_file <- file.path(output_root, "all_quantification_results.csv")
+  fwrite(all_results, summary_file, showProgress = FALSE)
+  cat(sprintf("\n✓ Résultats combinés sauvegardés: %s\n", summary_file))
+}
+
+cat("\n✅ Traitement terminé\n")
+cat(sprintf("• Résultats de quantification: %s\n", results_dir))
+cat(sprintf("• Résumé du modèle: %s\n", model_dir))
+cat(sprintf("• Plots de calibration: %s\n", plots_dir))
+cat(sprintf("• Fichier combiné: %s\n", "all_quantification_results.csv"))

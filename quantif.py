@@ -1,18 +1,15 @@
 # scripts/quantification/quantif.py
-
 from pathlib import Path
 import subprocess
 import sys
 import os
 
-# Ajoutez le dossier courant au PYTHONPATH
+# Ajout du dossier courant au PYTHONPATH
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 
 from scripts.quantification.compound_recovery import get_compound_summary
 from scripts.visualization.plot_concentrations import plot_top_concentrations
-
-# Import direct depuis le dossier scripts/quantification/
 from scripts.quantification.calculate_rqmix import calculate_rqmix
 
 def find_csv_file(directory: Path) -> Path:
@@ -47,7 +44,6 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # 1. Préparation des données
         print("\n🔍 Préparation des données...")
         compounds_file = find_csv_file(compounds_dir)
         calibration_file = find_csv_file(calibration_dir)
@@ -55,24 +51,21 @@ def main() -> None:
         summary_df = get_compound_summary(
             input_dir=input_dir,
             compounds_file=compounds_file,
-            calibration_file=calibration_file,
+            calibration_file=calibration_file
         )
         
         if not summary_df.empty:
             summary_df.to_csv(output_dir / "compounds_summary.csv", index=False)
             print(f"   ✓ Données préparées dans {output_dir}")
             
-            # 2. Analyse MS2Quant
             print("\n🧪 Lancement de l'analyse MS2Quant...")
             if run_r_script():
                 print("   ✓ Analyse MS2Quant terminée")
-
-                # 3. Calcul du RQMIX
+                
                 print("\n📊 Calcul des RQmix...")
                 calculate_rqmix(output_dir / "samples_quantification", output_dir)
                 print("   ✓ Calcul RQmix terminé")
                 
-                # 4. Visualisation des résultats
                 print("\n📊 Génération des visualisations...")
                 quant_dir = output_dir / "samples_quantification"
                 plot_top_concentrations(quant_dir, output_dir)
@@ -86,4 +79,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
