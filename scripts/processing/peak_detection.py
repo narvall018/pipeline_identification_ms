@@ -111,6 +111,7 @@ def cluster_peaks(peaks_df: pd.DataFrame) -> pd.DataFrame:
             cluster_data = df[df['cluster'] == cluster_id]
             max_intensity_idx = cluster_data['intensity'].idxmax()
             representative = cluster_data.loc[max_intensity_idx].copy()
+            representative['intensity'] = cluster_data['intensity'].sum() ## AJOUT SOMME INTENSITE (pseudo-aire)
             representative = representative.drop('cluster')
             result.append(representative)
         
