@@ -46,7 +46,7 @@ def plot_top_concentrations(quant_dir: Path, output_dir: Path, n_compounds: int 
             
             # Lire et préparer les données
             df = pd.read_csv(file)
-            top_compounds = df.nlargest(n_compounds, 'conc_M')
+            top_compounds = df.nlargest(n_compounds, 'conc')
             
             # Créer le plot
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -54,14 +54,14 @@ def plot_top_concentrations(quant_dir: Path, output_dir: Path, n_compounds: int 
             # Mise à jour de l'appel à barplot pour éviter le warning
             sns.barplot(data=top_compounds, 
                        y='identifier', 
-                       x='conc_M',
+                       x='conc',
                        hue='identifier',
                        palette='viridis',
                        legend=False,
                        ax=ax)
             
             ax.set_title(f"Top {n_compounds} composés les plus concentrés\n{sample_name}")
-            ax.set_xlabel("Concentration (M)")
+            ax.set_xlabel("Concentration (ug/L)")
             ax.set_ylabel("Composé")
             
             # Ajuster la mise en page
