@@ -84,53 +84,46 @@ def detect_peaks(data: pd.DataFrame) -> pd.DataFrame:
         raise
 
 def cluster_peaks(peaks_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Regroupe les pics similaires en clusters en utilisant DBSCAN.
-    """
-    try:
-        df = peaks_df.copy()
-        X = df[['mz', 'drift_time', 'retention_time']].values
-        
-        mz_tolerance = np.median(X[:, 0]) * 1e-4
-        dt_tolerance = np.median(X[:, 1]) * 0.10
-        rt_tolerance = 0.20
-        
-        X_scaled = np.zeros_like(X)
-        X_scaled[:, 0] = X[:, 0] / mz_tolerance
-        X_scaled[:, 1] = X[:, 1] / dt_tolerance
-        X_scaled[:, 2] = X[:, 2] / rt_tolerance
-        
-        clusters = DBSCAN(eps=1.0, min_samples=1).fit_predict(X_scaled)
-        df['cluster'] = clusters
-        
-        result = []
-        for cluster_id in sorted(set(clusters)):
-            if cluster_id == -1:
-                continue
-                
-            cluster_data = df[df['cluster'] == cluster_id]
-            max_intensity_idx = cluster_data['intensity'].idxmax()
-            representative = cluster_data.loc[max_intensity_idx].copy()
-            representative['intensity'] = cluster_data['intensity'].sum() ## AJOUT SOMME INTENSITE (pseudo-aire)
-            representative = representative.drop('cluster')
-            result.append(representative)
-        
-        result_df = pd.DataFrame(result) if result else pd.DataFrame()
-        
-        if not result_df.empty:
-            result_df = result_df.sort_values(
-                by=["mz", "retention_time"], 
-                ascending=True
-            ).reset_index(drop=True)
-        
-        logger.info(f"Pics originaux : {len(peaks_df)}")
-        logger.info(f"Pics après clustering : {len(result_df)}")
-        
-        return result_df
-
-    except Exception as e:
-        logger.error(f"Erreur clustering pics : {str(e)}")
-        raise
+    df = peaks_df.copy()
+    X = df[['mz', 'drift_time', 'retention_time']].values
+    
+    median_mz = np.median(X[:, 0])
+    # Tolérances fixes
+    mz_tolerance = median_mz * 10e-6    # 10 ppm
+    rt_tolerance = 0.1                  # minutes 6 secondes
+    dt_tolerance = 1.0                  # 1ms
+    
+    X_scaled = np.zeros_like(X)
+    X_scaled[:, 0] = X[:, 0] / mz_tolerance
+    X_scaled[:, 1] = X[:, 1] / dt_tolerance
+    X_scaled[:, 2] = X[:, 2] / rt_tolerance
+    
+    clusters = DBSCAN(eps=1.0, min_samples=1).fit_predict(X_scaled)
+    df['cluster'] = clusters
+    
+    result = []
+    for cluster_id in sorted(set(clusters)):
+        if cluster_id == -1:
+            continue
+        cluster_data = df[df['cluster'] == cluster_id]
+        max_intensity_idx = cluster_data['intensity'].idxmax()
+        representative = cluster_data.loc[max_intensity_idx].copy()
+        representative['intensity'] = cluster_data['intensity'].sum() # Pseudo-AIRE
+        representative = representative.drop('cluster')
+        result.append(representative)
+    
+    result_df = pd.DataFrame(result) if result else pd.DataFrame()
+    
+    if not result_df.empty:
+        result_df = result_df.sort_values(
+            by=["mz", "retention_time"], 
+            ascending=True
+        ).reset_index(drop=True)
+    
+    logger.info(f"Pics originaux : {len(peaks_df)}")
+    logger.info(f"Pics après clustering : {len(result_df)}")
+    
+    return result_df
 
 
 
