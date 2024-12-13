@@ -1,5 +1,5 @@
 #scripts/processing/ccs_calibration.py
-#-*- coding:utf-8 -*-
+# -*- coding:utf-8 -*-
 
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Optional
@@ -9,117 +9,69 @@ from sklearn.cluster import DBSCAN
 from ..utils.io_handlers import read_parquet_data, save_peaks
 from ..processing.peak_detection import prepare_data, detect_peaks, cluster_peaks
 
-
 def process_blank_file(
     file_path: Union[str, Path],
-    data_type: str = 'blanks',
-    total_files: int = 1,
-    current_file: int = 1
+    data_type: str = 'blanks'
 ) -> Optional[pd.DataFrame]:
-    """
-    Traite un fichier blank pour détecter les pics.
+    data, metadata = read_parquet_data(file_path)
+    processed_data = prepare_data(data)
+    if processed_data is None or processed_data.empty:
+        return None
+
+    peaks = detect_peaks(processed_data)
+    if peaks.empty:
+        return None
+    sample_name = Path(file_path).stem
+    save_peaks(peaks, sample_name, "peaks", data_type, metadata)
+
+    clustered_peaks = cluster_peaks(peaks)
+    if clustered_peaks.empty:
+        return None
+    save_peaks(clustered_peaks, sample_name, "clustered_peaks", data_type, metadata)
     
-    Args:
-        file_path: Chemin vers le fichier blank
-        data_type: Type de données (default: 'blanks')
-        total_files: Nombre total de fichiers
-        current_file: Index du fichier courant
-        
-    Returns:
-        DataFrame contenant les pics du blank ou None si erreur
-    """
-    try:
-        sample_name = Path(file_path).stem
-        
-        print(f"\n{'=' * 80}")
-        print(f"TRAITEMENT DU BLANK {sample_name} ({current_file}/{total_files})")
-        print(f"{'=' * 80}")
+    return clustered_peaks
 
-        # Lecture des données
-        #print("\n📊 Lecture des données...")
-        data, metadata = read_parquet_data(file_path)
-        #print(f"   ✓ Données chargées : {len(data)} lignes")
+def process_blank_with_replicates(
+    blank_name: str, 
+    replicate_files: List[Path],
+    output_dir: Path
+) -> pd.DataFrame:
+    print(f"\n{'='*80}")
+    print(f"TRAITEMENT DU BLANK {blank_name}")
+    print(f"{'='*80}")
 
-        # Préparation MS1
-        print("\n🔍 Préparation des données MS1...")
-        processed_data = prepare_data(data)
-        if processed_data is None or processed_data.empty:
-            print("   ✗ Aucune donnée MS1 valide")
-            return None
-        print(f"   ✓ Données préparées")
+    all_peaks = {}
+    for rep_file in replicate_files:
+        # Renommer le fichier pour enlever "_replicate_"
+        rep_name = rep_file.stem.replace('_replicate_', '_')
+        
+        peaks = process_blank_file(rep_file)
+        if peaks is not None:
+            all_peaks[rep_name] = peaks
 
-        # Détection des pics
-        print("\n🎯 Détection des pics...")
-        peaks = detect_peaks(processed_data)
-        if peaks.empty:
-            print("   ✗ Aucun pic détecté")
-            return None
-        print(f"   ✓ Pics détectés : {len(peaks)}")
-        save_peaks(peaks, sample_name, "peaks", data_type, metadata)
-
-        # Clustering des pics
-        print("\n🔄 Clustering des pics...")
-        clustered_peaks = cluster_peaks(peaks)
-        if clustered_peaks.empty:
-            print("   ✗ Pas de pics après clustering")
-            return None
-        print(f"   ✓ Pics après clustering : {len(clustered_peaks)}")
-        save_peaks(clustered_peaks, sample_name, "clustered_peaks", data_type, metadata)
-        
-        return clustered_peaks
-
-    except Exception as e:
-        print(f"\n❌ Erreur lors du traitement de {sample_name}")
-        raise
-
-def process_blank_with_replicates(blank_name: str, 
-                                replicate_files: List[Path],
-                                output_dir: Path) -> pd.DataFrame:
-    """
-    Traite un blank avec ses réplicats.
-    
-    Args:
-        blank_name: Nom de base du blank
-        replicate_files: Liste des fichiers réplicats
-        output_dir: Dossier de sortie
-        
-    Returns:
-        DataFrame des pics communs aux réplicats
-    """
-    try:
-        print(f"\n{'='*80}")
-        print(f"Traitement du blank {blank_name}")
-        print(f"{'='*80}")
-        
-        all_peaks = {}
-        initial_peak_counts = {}
-        
-        # Traiter chaque réplicat
-        for rep_file in replicate_files:
-            peaks = process_blank_file(rep_file)
-            if peaks is not None:
-                all_peaks[rep_file.stem] = peaks
-                initial_peak_counts[rep_file.stem] = len(peaks)
-        
-        if not all_peaks:
-            return pd.DataFrame()
-            
-        # Si un seul réplicat
-        if len(all_peaks) == 1:
-            return list(all_peaks.values())[0]
-            
-        # Combiner les réplicats
-        min_required = 2 if len(replicate_files) == 3 else len(replicate_files)
-        print(f"   ℹ️ Critère: {min_required}/{len(replicate_files)} réplicats requis")
-        
-        return cluster_blank_replicates(all_peaks, min_required)
-        
-    except Exception as e:
-        print(f"❌ Erreur lors du traitement du blank {blank_name}: {str(e)}")
+    if not all_peaks:
+        print("   Aucun pic détecté dans les réplicats.")
         return pd.DataFrame()
+            
+    print("\nPICS PAR RÉPLICAT:")
+    for rep, df in all_peaks.items():
+        print(f"   {rep}: {len(df)} pics")
+
+    if len(all_peaks) == 1:
+        unique_df = list(all_peaks.values())[0]
+        print(f"\n   1 seul réplicat traité.")
+        print(f"   Pics finaux : {len(unique_df)}")
+        return unique_df
+
+    min_required = 2 if len(replicate_files) == 3 else len(replicate_files)
+    print(f"\n   ℹ️ Critère: {min_required}/{len(replicate_files)} réplicats requis")
+    combined_peaks = cluster_blank_replicates(all_peaks, min_required)
+    print(f"\n   Pics finaux après convergence : {len(combined_peaks)}")
+
+    return combined_peaks
+
 
 def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: int) -> pd.DataFrame:
-    # Combiner les réplicats efficacement
     all_peaks = pd.concat(
         [peaks.assign(replicate=name) for name, peaks in peaks_dict.items()],
         ignore_index=True
@@ -128,18 +80,15 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: 
     if len(all_peaks) == 0:
         return pd.DataFrame()
     
-    # Calcul des tolérances et normalisation
     X = all_peaks[['mz', 'drift_time', 'retention_time']].to_numpy()
     median_mz = np.median(X[:, 0])
-    # Calcul des tolérances
     mz_tolerance = median_mz * 10e-6
     X_scaled = np.column_stack([
         X[:, 0] / mz_tolerance,
-        X[:, 1] / 1.0,  # dt_tolerance
-        X[:, 2] / 0.1   # rt_tolerance
+        X[:, 1] / 1.0,
+        X[:, 2] / 0.1
     ])
     
-    # Clustering optimisé
     clusters = DBSCAN(
         eps=0.6,
         min_samples=min_required,
@@ -147,27 +96,68 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: 
         n_jobs=-1
     ).fit_predict(X_scaled)
     
-    # Application du masque et groupement
     all_peaks['cluster'] = clusters
     valid_clusters = all_peaks[clusters != -1].groupby('cluster')
     
-    # Traitement des clusters valides
     result = []
     for _, cluster_data in valid_clusters:
         n_replicates = cluster_data['replicate'].nunique()
-        
         if n_replicates >= min_required:
             max_intensity_idx = cluster_data['intensity'].idxmax()
             representative = cluster_data.loc[max_intensity_idx].copy()
             representative['n_replicates'] = n_replicates
             result.append(representative)
     
-    # Création et tri du DataFrame final
     result_df = pd.DataFrame(result) if result else pd.DataFrame()
     if not result_df.empty:
         result_df = result_df.sort_values('intensity', ascending=False)
     
     return result_df
+
+def subtract_blank_peaks(sample_peaks: pd.DataFrame, blank_peaks: pd.DataFrame) -> pd.DataFrame:
+    if blank_peaks.empty or sample_peaks.empty:
+        return sample_peaks
+
+    combined = pd.concat(
+        [sample_peaks.assign(is_sample=True), blank_peaks.assign(is_sample=False)],
+        ignore_index=True
+    )
+    
+    if combined.empty:
+        return sample_peaks
+
+    X = combined[['mz', 'drift_time', 'retention_time']].values
+    median_mz = np.median(X[:, 0])
+    mz_tolerance = median_mz * 10e-6
+
+    X_scaled = np.column_stack([
+        X[:, 0] / mz_tolerance,
+        X[:, 1] / 1.0,
+        X[:, 2] / 0.1
+    ])
+
+    # Utilisation de ball_tree et parallélisation
+    clusters = DBSCAN(
+        eps=1.0,
+        min_samples=2,
+        algorithm='ball_tree',
+        n_jobs=-1
+    ).fit_predict(X_scaled)
+    
+    combined['cluster'] = clusters
+
+    blank_clusters = set(
+        combined[(~combined['is_sample']) & (combined['cluster'] != -1)]['cluster']
+    )
+
+    clean_peaks = combined[
+        combined['is_sample'] & 
+        (~combined['cluster'].isin(blank_clusters) | (combined['cluster'] == -1))
+    ].copy()
+
+    clean_peaks = clean_peaks.drop(['is_sample', 'cluster'], axis=1)
+    return clean_peaks
+
 
 
 # def quotient_compute(a: float, b: float) -> float:
@@ -279,61 +269,4 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: 
 #     return result_df
 
 
-def subtract_blank_peaks(sample_peaks: pd.DataFrame, 
-                        blank_peaks: pd.DataFrame) -> pd.DataFrame:
-    """
-    Soustrait les pics du blank des pics de l'échantillon.
-    
-    Args:
-        sample_peaks: DataFrame des pics de l'échantillon
-        blank_peaks: DataFrame des pics du blank
-        
-    Returns:
-        DataFrame des pics de l'échantillon sans ceux du blank
-    """
-    if blank_peaks.empty or sample_peaks.empty:
-        return sample_peaks
-        
-    print("\n🧹 Soustraction des pics du blank...")
-    initial_peaks = len(sample_peaks)
-    
-    # Préparer les données pour DBSCAN
-    combined = pd.concat([
-        sample_peaks.assign(is_sample=True),
-        blank_peaks.assign(is_sample=False)
-    ], ignore_index=True)
-    
-    X = combined[['mz', 'drift_time', 'retention_time']].values
-    
-    # Mêmes tolérances que pour le clustering
-    mz_tolerance = np.median(X[:, 0]) * 1e-4
-    dt_tolerance = np.median(X[:, 1]) * 0.10
-    rt_tolerance = 0.20
-    
-    X_scaled = np.zeros_like(X)
-    X_scaled[:, 0] = X[:, 0] / mz_tolerance
-    X_scaled[:, 1] = X[:, 1] / dt_tolerance
-    X_scaled[:, 2] = X[:, 2] / rt_tolerance
-    
-    # Clustering
-    clusters = DBSCAN(eps=1.0, min_samples=2).fit_predict(X_scaled)
-    combined['cluster'] = clusters
-    
-    # Identifier les clusters contenant des pics du blank
-    blank_clusters = set(combined[
-        (~combined['is_sample']) & (combined['cluster'] != -1)
-    ]['cluster'])
-    
-    # Filtrer les pics
-    clean_peaks = combined[
-        combined['is_sample'] & 
-        (~combined['cluster'].isin(blank_clusters) | (combined['cluster'] == -1))
-    ].copy()
-    
-    # Nettoyage
-    clean_peaks = clean_peaks.drop(['is_sample', 'cluster'], axis=1)
-    
-    peaks_removed = initial_peaks - len(clean_peaks)
-    print(f"   ✓ {peaks_removed} pics retirés ({peaks_removed/initial_peaks*100:.1f}%)")
-    
-    return clean_peaks
+
