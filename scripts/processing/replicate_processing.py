@@ -94,9 +94,9 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
             (total_replicates == 3 and n_replicates >= 2)):
             
             representative = {
-                'mz': cluster_data['mz'].mean(),
-                'drift_time': cluster_data['drift_time'].mean(),
-                'retention_time': cluster_data['retention_time'].mean(),
+                'mz': cluster_data['mz'].max(),
+                'drift_time': cluster_data['drift_time'].max(),
+                'retention_time': cluster_data['retention_time'].max(),
                 'intensity': cluster_data['intensity'].max(),
                 'CCS': cluster_data['CCS'].mean() if 'CCS' in cluster_data.columns else None,
                 'n_replicates': n_replicates
