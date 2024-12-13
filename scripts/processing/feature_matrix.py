@@ -184,146 +184,123 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
 
 
 def process_features(feature_df: pd.DataFrame, raw_files: Dict, identifier: CompoundIdentifier) -> pd.DataFrame:
-    """
-    Processus optimisé d'extraction MS2 puis identification des features alignées.
-    """
-    try:
-        print("\n🎯 Extraction des spectres MS2...")
-        from concurrent.futures import ThreadPoolExecutor
-        import multiprocessing
-        from functools import partial
-        from tqdm import tqdm
-        import random
-        
-        feature_df = feature_df.copy()
-        total_features = len(feature_df)
-        
-        def process_source_file(group_data):
-            """Traite toutes les features d'un même fichier source."""
-            source_sample, features = group_data
-            
-            if source_sample not in raw_files:
-                return [(idx, [], []) for idx in features.index]
-            
-            # Charger les données MS2 une seule fois
+    from concurrent.futures import ThreadPoolExecutor
+    from functools import partial
+    from tqdm import tqdm
+    import numpy as np
+    import pandas as pd
+    import random
+
+    feature_df = feature_df.copy()
+    total_features = len(feature_df)
+
+    grouped_features = list(feature_df.groupby('source_sample'))
+    ms2_data_map = {}
+
+    for source_sample, _ in grouped_features:
+        if source_sample in raw_files:
             raw_file = raw_files[source_sample]
             raw_data = pd.read_parquet(raw_file)
-            ms2_data = raw_data[raw_data['mslevel'].astype(int) == 2]
-            
-            results = []
-            for idx, feature in features.iterrows():
-                match_ms2 = ms2_data[
-                    (ms2_data['rt'] >= feature['source_rt'] - 0.00422) &
-                    (ms2_data['rt'] <= feature['source_rt'] + 0.00422) &
-                    (ms2_data['dt'] >= feature['source_dt'] - 0.22) &
-                    (ms2_data['dt'] <= feature['source_dt'] + 0.22)
-                ]
-                
-                if len(match_ms2) > 0:
-                    match_ms2['mz_rounded'] = match_ms2['mz'].round(3)
-                    spectrum = match_ms2.groupby('mz_rounded')['intensity'].sum().reset_index()
-                    
-                    max_intensity = spectrum['intensity'].max()
-                    if max_intensity > 0:
-                        spectrum['intensity_normalized'] = (spectrum['intensity'] / max_intensity * 999).round(0).astype(int)
-                        spectrum = spectrum.nlargest(10, 'intensity')
-                        results.append((idx, spectrum['mz_rounded'].tolist(), spectrum['intensity_normalized'].tolist()))
-                    else:
-                        results.append((idx, [], []))
-                else:
-                    results.append((idx, [], []))
-                    
-            return results
-        
-        # Grouper les features par fichier source
-        grouped_features = list(feature_df.groupby('source_sample'))
-        
-        # Calculer le nombre optimal de workers
-        n_workers = min(multiprocessing.cpu_count(), len(grouped_features))
-        
-        # Liste pour stocker tous les résultats
-        all_results = []
-        
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            results_list = list(tqdm(
-                executor.map(process_source_file, grouped_features),
-                total=len(grouped_features),
-                desc="Extraction MS2 par fichier"
-            ))
-            for results in results_list:
-                all_results.extend(results)
-        
-        # Trier les résultats par index pour maintenir l'ordre
-        all_results.sort(key=lambda x: x[0])
-        
-        # Assigner les résultats au DataFrame
-        feature_df['peaks_mz_ms2'] = [r[1] for r in all_results]
-        feature_df['peaks_intensities_ms2'] = [r[2] for r in all_results]
-        
-        n_with_ms2 = sum(1 for x in feature_df['peaks_mz_ms2'] if len(x) > 0)
-        print(f"\n   ✓ {n_with_ms2}/{total_features} features avec spectres MS2 ({(n_with_ms2/total_features)*100:.1f}%)")
-        
-        # Pré-traitement de la base de données
-        print("\n🔍 Préparation de l'identification...")
-        db = identifier.db.copy()
-        db = db.sort_values('mz')
-        db_mz = db['mz'].values
-        
-        # Identification
-        print("\n🔍 Identification des features...")
-        all_matches = []
-        
-        for idx, feature in tqdm(feature_df.iterrows(), total=total_features, desc="Identification"):
-            mz_tolerance = feature['mz'] * 10e-6
-            mz_min, mz_max = feature['mz'] - mz_tolerance, feature['mz'] + mz_tolerance
-            
-            idx_start = np.searchsorted(db_mz, mz_min, side='left')
-            idx_end = np.searchsorted(db_mz, mz_max, side='right')
-            
-            if idx_start == idx_end:
-                continue
-                
-            feature_data = pd.DataFrame([{
-                'mz': feature['mz'],
-                'retention_time': feature['retention_time'],
-                'drift_time': feature['drift_time'],
-                'CCS': feature['CCS'],
-                'intensity': feature['intensity']
-            }])
-            
-            matches_for_feature = find_matches_window(feature_data, db.iloc[idx_start:idx_end])
-            
-            if not matches_for_feature.empty:
-                matches_for_feature['feature_idx'] = idx
-                matches_for_feature['peaks_mz_ms2'] = [feature['peaks_mz_ms2']] * len(matches_for_feature)
-                matches_for_feature['peaks_intensities_ms2'] = [feature['peaks_intensities_ms2']] * len(matches_for_feature)
-                all_matches.append(matches_for_feature)
-        
-        if all_matches:
-            matches = pd.concat(all_matches, ignore_index=True)
-            print(f"\n   ✓ {len(matches)} matches trouvés")
-            
-            # D'abord appliquer add_ms2_scores pour avoir les niveaux de confiance initiaux
-            add_ms2_scores(matches, identifier)
-            
-            # Modifier uniquement les matches de niveau 1 qui ont has_ms2_db = 0
-            level1_no_ms2_mask = (matches['confidence_level'] == 1) & (matches['has_ms2_db'] == 0)
-            matches.loc[level1_no_ms2_mask, 'has_ms2_db'] = 1
-            matches.loc[level1_no_ms2_mask, 'ms2_similarity_score'] = matches.loc[level1_no_ms2_mask].apply(
-                lambda x: random.uniform(0.2, 0.5), axis=1
-            )
-            
-            # Réorganiser les colonnes avec confidence_level à la fin
-            cols = [col for col in matches.columns if col != 'confidence_level'] + ['confidence_level']
-            matches = matches[cols]
-            
-            return matches
-        
-        return pd.DataFrame()
-        
-    except Exception as e:
-        print(f"Erreur lors du traitement des features: {str(e)}")
-        raise
+            ms2_data = raw_data[raw_data['mslevel'].astype(int) == 2].copy()
+            ms2_data.set_index(['rt', 'dt'], inplace=True)
+            ms2_data = ms2_data.sort_index()
+            ms2_data_map[source_sample] = ms2_data
+
+    def extract_ms2_spectrum(feature, ms2_data):
+        rt_min = feature['source_rt'] - 0.00422
+        rt_max = feature['source_rt'] + 0.00422
+        dt_min = feature['source_dt'] - 0.22
+        dt_max = feature['source_dt'] + 0.22
+
+        sub_data = ms2_data.loc[(slice(rt_min, rt_max), slice(dt_min, dt_max)), :]
+
+        if len(sub_data) == 0:
+            return [], []
+
+        sub_data = sub_data.reset_index()
+        sub_data['mz_rounded'] = sub_data['mz'].round(3)
+        spectrum = sub_data.groupby('mz_rounded')['intensity'].sum().reset_index()
+
+        max_intensity = spectrum['intensity'].max()
+        if max_intensity > 0:
+            spectrum['intensity_normalized'] = (spectrum['intensity'] / max_intensity * 999).round(0).astype(int)
+            spectrum = spectrum.nlargest(10, 'intensity')
+            return spectrum['mz_rounded'].tolist(), spectrum['intensity_normalized'].tolist()
+        else:
+            return [], []
+
+    def process_source_file(group_data):
+        source_sample, features = group_data
+        if source_sample not in ms2_data_map:
+            return [(idx, [], []) for idx in features.index]
+
+        ms2_data = ms2_data_map[source_sample]
+        results = []
+        for idx, feature in features.iterrows():
+            mzs, intensities = extract_ms2_spectrum(feature, ms2_data)
+            results.append((idx, mzs, intensities))
+        return results
+
+    n_workers = min(multiprocessing.cpu_count(), len(grouped_features))
+
+    all_results = []
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        for results in tqdm(executor.map(process_source_file, grouped_features),
+                            total=len(grouped_features), desc="Extraction MS2 par fichier"):
+            all_results.extend(results)
+
+    all_results.sort(key=lambda x: x[0])
+    feature_df['peaks_mz_ms2'] = [r[1] for r in all_results]
+    feature_df['peaks_intensities_ms2'] = [r[2] for r in all_results]
+
+    n_with_ms2 = sum(1 for x in feature_df['peaks_mz_ms2'] if len(x) > 0)
+    print(f"{n_with_ms2}/{total_features} features avec spectres MS2")
+
+    db = identifier.db.copy()
+    db = db.sort_values('mz')
+    db_mz = db['mz'].values
+
+    all_matches = []
+    for idx, feature in tqdm(feature_df.iterrows(), total=total_features, desc="Identification"):
+        mz_tolerance = feature['mz'] * 10e-6
+        mz_min, mz_max = feature['mz'] - mz_tolerance, feature['mz'] + mz_tolerance
+
+        idx_start = np.searchsorted(db_mz, mz_min, side='left')
+        idx_end = np.searchsorted(db_mz, mz_max, side='right')
+
+        if idx_start == idx_end:
+            continue
+
+        feature_data = pd.DataFrame([{
+            'mz': feature['mz'],
+            'retention_time': feature['retention_time'],
+            'drift_time': feature['drift_time'],
+            'CCS': feature['CCS'],
+            'intensity': feature['intensity']
+        }])
+
+        matches_for_feature = find_matches_window(feature_data, db.iloc[idx_start:idx_end])
+        if not matches_for_feature.empty:
+            matches_for_feature['feature_idx'] = idx
+            matches_for_feature['peaks_mz_ms2'] = [feature['peaks_mz_ms2']] * len(matches_for_feature)
+            matches_for_feature['peaks_intensities_ms2'] = [feature['peaks_intensities_ms2']] * len(matches_for_feature)
+            all_matches.append(matches_for_feature)
+
+    if all_matches:
+        matches = pd.concat(all_matches, ignore_index=True)
+        add_ms2_scores(matches, identifier)
+        level1_no_ms2_mask = (matches['confidence_level'] == 1) & (matches['has_ms2_db'] == 0)
+        matches.loc[level1_no_ms2_mask, 'has_ms2_db'] = 1
+        matches.loc[level1_no_ms2_mask, 'ms2_similarity_score'] = matches.loc[level1_no_ms2_mask].apply(
+            lambda x: random.uniform(0.2, 0.5), axis=1
+        )
+        cols = [col for col in matches.columns if col != 'confidence_level'] + ['confidence_level']
+        matches = matches[cols]
+        return matches
+
+    return pd.DataFrame()
+
+
 
 
 def create_feature_matrix(input_dir: Path, output_dir: Path, identifier: CompoundIdentifier) -> None:
