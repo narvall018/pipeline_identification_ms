@@ -43,7 +43,6 @@ def process_replicates(replicate_files: List[Path]) -> Tuple[Dict[str, pd.DataFr
 
 
 def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Cluster les pics entre réplicats et calcule les valeurs représentatives"""
     if len(peaks_dict) == 1:
         return list(peaks_dict.values())[0]
     
@@ -59,35 +58,38 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     if len(combined_peaks) == 0:
         return pd.DataFrame()
     
-    # Préparation pour DBSCAN
     X = combined_peaks[['mz', 'drift_time', 'retention_time']].values
     total_replicates = len(peaks_dict)
     min_required = 2 if total_replicates == 3 else total_replicates
     
-    # Tolérances
-    mz_tolerance = np.median(X[:, 0]) * 1e-4
-    dt_tolerance = np.median(X[:, 1]) * 0.10
-    rt_tolerance = 0.20
+    # Calcul de la médiane m/z pour appliquer les 10 ppm
+    median_mz = np.median(X[:, 0])
     
-    # Normalisation
+    # Tolérances fixes
+    # 10 ppm pour m/z
+    mz_tolerance = median_mz * 10e-6
+    rt_tolerance = 0.1    # min
+    dt_tolerance = 1.0     # unités de drift time
+    
+    # Mise à l'échelle
     X_scaled = np.zeros_like(X)
     X_scaled[:, 0] = X[:, 0] / mz_tolerance
     X_scaled[:, 1] = X[:, 1] / dt_tolerance
     X_scaled[:, 2] = X[:, 2] / rt_tolerance
     
-    # Clustering avec eps réduit pour être plus strict
-    clusters = DBSCAN(eps=0.8, min_samples=min_required).fit_predict(X_scaled)
+    # Clustering avec DBSCAN
+    clusters = DBSCAN(eps=0.6, min_samples=min_required).fit_predict(X_scaled)
     combined_peaks['cluster'] = clusters
     
-    # Traitement des clusters
     result = []
     for cluster_id in sorted(set(clusters)):
         if cluster_id == -1:
             continue
-            
+        
         cluster_data = combined_peaks[combined_peaks['cluster'] == cluster_id]
         n_replicates = cluster_data['replicate'].nunique()
         
+        # Conditions selon le nombre de réplicats
         if ((total_replicates == 2 and n_replicates == 2) or
             (total_replicates == 3 and n_replicates >= 2)):
             
@@ -100,6 +102,7 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
                 'n_replicates': n_replicates
             }
             
+            # Conserver les autres colonnes (métadonnées éventuelles)
             for col in cluster_data.columns:
                 if col not in ['mz', 'drift_time', 'retention_time', 'intensity', 'CCS', 'cluster', 'replicate']:
                     representative[col] = cluster_data[col].iloc[0]
