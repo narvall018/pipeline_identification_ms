@@ -184,12 +184,7 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
 
 
 def process_features(feature_df: pd.DataFrame, raw_files: Dict, identifier: CompoundIdentifier) -> pd.DataFrame:
-    from concurrent.futures import ThreadPoolExecutor
-    from functools import partial
-    from tqdm import tqdm
-    import numpy as np
-    import pandas as pd
-    import random
+
 
     feature_df = feature_df.copy()
     total_features = len(feature_df)
@@ -299,9 +294,6 @@ def process_features(feature_df: pd.DataFrame, raw_files: Dict, identifier: Comp
         return matches
 
     return pd.DataFrame()
-
-
-
 
 def create_feature_matrix(input_dir: Path, output_dir: Path, identifier: CompoundIdentifier) -> None:
     """Fonction principale pour générer la matrice de features et les identifications."""
