@@ -119,41 +119,41 @@ def process_blank_with_replicates(blank_name: str,
         return pd.DataFrame()
 
 def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: int) -> pd.DataFrame:
-    all_peaks = []
-    for rep_name, peaks in peaks_dict.items():
-        peaks_copy = peaks.copy()
-        peaks_copy['replicate'] = rep_name
-        all_peaks.append(peaks_copy)
+    # Combiner les réplicats efficacement
+    all_peaks = pd.concat(
+        [peaks.assign(replicate=name) for name, peaks in peaks_dict.items()],
+        ignore_index=True
+    )
     
-    combined_peaks = pd.concat(all_peaks, ignore_index=True)
-    
-    if len(combined_peaks) == 0:
+    if len(all_peaks) == 0:
         return pd.DataFrame()
     
-    X = combined_peaks[['mz', 'drift_time', 'retention_time']].values
-    
-    # Calcul de la médiane m/z pour appliquer les 10 ppm
+    # Calcul des tolérances et normalisation
+    X = all_peaks[['mz', 'drift_time', 'retention_time']].to_numpy()
     median_mz = np.median(X[:, 0])
-    mz_tolerance = median_mz * 10e-6   # 10 ppm
-    rt_tolerance = 0.1                 # 0,1 min
-    dt_tolerance = 1.0                 # 1 unité de drift time
+    # Calcul des tolérances
+    mz_tolerance = median_mz * 10e-6
+    X_scaled = np.column_stack([
+        X[:, 0] / mz_tolerance,
+        X[:, 1] / 1.0,  # dt_tolerance
+        X[:, 2] / 0.1   # rt_tolerance
+    ])
     
-    # Mise à l'échelle
-    X_scaled = np.zeros_like(X)
-    X_scaled[:, 0] = X[:, 0] / mz_tolerance
-    X_scaled[:, 1] = X[:, 1] / dt_tolerance
-    X_scaled[:, 2] = X[:, 2] / rt_tolerance
+    # Clustering optimisé
+    clusters = DBSCAN(
+        eps=0.6,
+        min_samples=min_required,
+        algorithm='ball_tree',
+        n_jobs=-1
+    ).fit_predict(X_scaled)
     
-    # Clustering
-    clusters = DBSCAN(eps=0.6, min_samples=min_required).fit_predict(X_scaled)
-    combined_peaks['cluster'] = clusters
+    # Application du masque et groupement
+    all_peaks['cluster'] = clusters
+    valid_clusters = all_peaks[clusters != -1].groupby('cluster')
     
+    # Traitement des clusters valides
     result = []
-    for cluster_id in sorted(set(clusters)):
-        if cluster_id == -1:
-            continue
-            
-        cluster_data = combined_peaks[combined_peaks['cluster'] == cluster_id]
+    for _, cluster_data in valid_clusters:
         n_replicates = cluster_data['replicate'].nunique()
         
         if n_replicates >= min_required:
@@ -162,13 +162,12 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: 
             representative['n_replicates'] = n_replicates
             result.append(representative)
     
+    # Création et tri du DataFrame final
     result_df = pd.DataFrame(result) if result else pd.DataFrame()
-    
     if not result_df.empty:
         result_df = result_df.sort_values('intensity', ascending=False)
     
     return result_df
-
 
 
 # def quotient_compute(a: float, b: float) -> float:

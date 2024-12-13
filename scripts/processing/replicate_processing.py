@@ -46,50 +46,47 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     if len(peaks_dict) == 1:
         return list(peaks_dict.values())[0]
     
-    # Combiner tous les réplicats
-    all_peaks = []
-    for rep_name, peaks in peaks_dict.items():
-        peaks_copy = peaks.copy()
-        peaks_copy['replicate'] = rep_name
-        all_peaks.append(peaks_copy)
+    # Combiner tous les réplicats efficacement
+    all_peaks = pd.concat(
+        [peaks.assign(replicate=name) for name, peaks in peaks_dict.items()],
+        ignore_index=True
+    )
     
-    combined_peaks = pd.concat(all_peaks, ignore_index=True)
-    
-    if len(combined_peaks) == 0:
+    if len(all_peaks) == 0:
         return pd.DataFrame()
     
-    X = combined_peaks[['mz', 'drift_time', 'retention_time']].values
+    # Configuration clustering
     total_replicates = len(peaks_dict)
     min_required = 2 if total_replicates == 3 else total_replicates
     
-    # Calcul de la médiane m/z pour appliquer les 10 ppm
+    # Calcul des tolérances et normalisation
+    X = all_peaks[['mz', 'drift_time', 'retention_time']].to_numpy()
     median_mz = np.median(X[:, 0])
-    
-    # Tolérances fixes
-    # 10 ppm pour m/z
+    # Calcul des tolérances
     mz_tolerance = median_mz * 10e-6
-    rt_tolerance = 0.1    # min
-    dt_tolerance = 1.0     # unités de drift time
+    X_scaled = np.column_stack([
+        X[:, 0] / mz_tolerance,
+        X[:, 1] / 1.0,  # dt_tolerance
+        X[:, 2] / 0.1   # rt_tolerance
+    ])
     
-    # Mise à l'échelle
-    X_scaled = np.zeros_like(X)
-    X_scaled[:, 0] = X[:, 0] / mz_tolerance
-    X_scaled[:, 1] = X[:, 1] / dt_tolerance
-    X_scaled[:, 2] = X[:, 2] / rt_tolerance
+    # Clustering optimisé
+    clusters = DBSCAN(
+        eps=0.6,
+        min_samples=min_required,
+        algorithm='ball_tree',
+        n_jobs=-1
+    ).fit_predict(X_scaled)
     
-    # Clustering avec DBSCAN
-    clusters = DBSCAN(eps=0.6, min_samples=min_required).fit_predict(X_scaled)
-    combined_peaks['cluster'] = clusters
+    # Application du masque et groupement
+    all_peaks['cluster'] = clusters
+    valid_clusters = all_peaks[clusters != -1].groupby('cluster')
     
+    # Construction du résultat
     result = []
-    for cluster_id in sorted(set(clusters)):
-        if cluster_id == -1:
-            continue
-        
-        cluster_data = combined_peaks[combined_peaks['cluster'] == cluster_id]
+    for _, cluster_data in valid_clusters:
         n_replicates = cluster_data['replicate'].nunique()
         
-        # Conditions selon le nombre de réplicats
         if ((total_replicates == 2 and n_replicates == 2) or
             (total_replicates == 3 and n_replicates >= 2)):
             
@@ -98,19 +95,23 @@ def cluster_replicates(peaks_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
                 'drift_time': cluster_data['drift_time'].max(),
                 'retention_time': cluster_data['retention_time'].max(),
                 'intensity': cluster_data['intensity'].max(),
-                'CCS': cluster_data['CCS'].mean() if 'CCS' in cluster_data.columns else None,
                 'n_replicates': n_replicates
             }
             
-            # Conserver les autres colonnes (métadonnées éventuelles)
-            for col in cluster_data.columns:
-                if col not in ['mz', 'drift_time', 'retention_time', 'intensity', 'CCS', 'cluster', 'replicate']:
-                    representative[col] = cluster_data[col].iloc[0]
+            # Gestion CCS si présent
+            if 'CCS' in cluster_data.columns:
+                representative['CCS'] = cluster_data['CCS'].mean()
+            
+            # Autres colonnes
+            meta_cols = [col for col in cluster_data.columns if col not in 
+                        ['mz', 'drift_time', 'retention_time', 'intensity', 'CCS', 'cluster', 'replicate']]
+            for col in meta_cols:
+                representative[col] = cluster_data[col].iloc[0]
             
             result.append(representative)
     
+    # Création et tri du DataFrame final
     result_df = pd.DataFrame(result) if result else pd.DataFrame()
-    
     if not result_df.empty:
         result_df = result_df.sort_values('intensity', ascending=False)
     
