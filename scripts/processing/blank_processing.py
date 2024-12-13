@@ -118,12 +118,7 @@ def process_blank_with_replicates(blank_name: str,
         print(f"❌ Erreur lors du traitement du blank {blank_name}: {str(e)}")
         return pd.DataFrame()
 
-def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame],  ## DBSCAN ## 
-                           min_required: int) -> pd.DataFrame:
-    """
-    Cluster les pics entre réplicats de blanks.
-    """
-    # Combiner tous les pics
+def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: int) -> pd.DataFrame:
     all_peaks = []
     for rep_name, peaks in peaks_dict.items():
         peaks_copy = peaks.copy()
@@ -135,25 +130,24 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame],  ## DBSCAN ##
     if len(combined_peaks) == 0:
         return pd.DataFrame()
     
-    # Préparation pour DBSCAN
     X = combined_peaks[['mz', 'drift_time', 'retention_time']].values
     
-    # Tolérances identiques aux échantillons
-    mz_tolerance = np.median(X[:, 0]) * 1e-4  # 0.1 ppm
-    dt_tolerance = np.median(X[:, 1]) * 0.10   # 10%
-    rt_tolerance = 0.20                        # 0.2 min
+    # Calcul de la médiane m/z pour appliquer les 10 ppm
+    median_mz = np.median(X[:, 0])
+    mz_tolerance = median_mz * 10e-6   # 10 ppm
+    rt_tolerance = 0.1                 # 0,1 min
+    dt_tolerance = 1.0                 # 1 unité de drift time
     
-    # Normalisation
+    # Mise à l'échelle
     X_scaled = np.zeros_like(X)
     X_scaled[:, 0] = X[:, 0] / mz_tolerance
     X_scaled[:, 1] = X[:, 1] / dt_tolerance
     X_scaled[:, 2] = X[:, 2] / rt_tolerance
     
     # Clustering
-    clusters = DBSCAN(eps=1.0, min_samples=min_required).fit_predict(X_scaled)
+    clusters = DBSCAN(eps=0.6, min_samples=min_required).fit_predict(X_scaled)
     combined_peaks['cluster'] = clusters
     
-    # Traitement des clusters
     result = []
     for cluster_id in sorted(set(clusters)):
         if cluster_id == -1:
