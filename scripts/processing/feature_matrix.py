@@ -21,13 +21,55 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+
+def cluster_peaks(peaks_df: pd.DataFrame) -> pd.DataFrame:
+    df = peaks_df.copy()
+    X = df[['mz', 'drift_time', 'retention_time']].values
+    
+    median_mz = np.median(X[:, 0])
+    # Tolérances fixes
+    mz_tolerance = median_mz * 10e-6    # 10 ppm
+    rt_tolerance = 0.1                  # minutes 6 secondes
+    dt_tolerance = 1.0                  # 1ms
+    
+    X_scaled = np.zeros_like(X)
+    X_scaled[:, 0] = X[:, 0] / mz_tolerance
+    X_scaled[:, 1] = X[:, 1] / dt_tolerance
+    X_scaled[:, 2] = X[:, 2] / rt_tolerance
+    
+    clusters = DBSCAN(eps=1.0, min_samples=1).fit_predict(X_scaled)
+    df['cluster'] = clusters
+    
+    result = []
+    for cluster_id in sorted(set(clusters)):
+        if cluster_id == -1:
+            continue
+        cluster_data = df[df['cluster'] == cluster_id]
+        max_intensity_idx = cluster_data['intensity'].idxmax()
+        representative = cluster_data.loc[max_intensity_idx].copy()
+        representative['intensity'] = cluster_data['intensity'].sum() # Pseudo-AIRE
+        representative = representative.drop('cluster')
+        result.append(representative)
+    
+    result_df = pd.DataFrame(result) if result else pd.DataFrame()
+    
+    if not result_df.empty:
+        result_df = result_df.sort_values(
+            by=["mz", "retention_time"], 
+            ascending=True
+        ).reset_index(drop=True)
+    
+    logger.info(f"Pics originaux : {len(peaks_df)}")
+    logger.info(f"Pics après clustering : {len(result_df)}")
+    
+    return result_df
+
+
+
 def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
-    """
-    Aligne les features à travers les échantillons après filtration.
-    """
     print("\n🔄 Alignement des features entre échantillons...")
     
-    # Charger les pics filtrés/nettoyés de chaque échantillon
+    # Chargement des pics filtrés/nettoyés de chaque échantillon
     all_peaks = []
     sample_names = []
     
@@ -54,9 +96,11 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
     print("\n🎯 Clustering des features...")
     X = df[['mz', 'drift_time', 'retention_time']].values
     
-    mz_tolerance = np.median(X[:, 0]) * 1e-4  
-    dt_tolerance = np.median(X[:, 1]) * 0.10   
-    rt_tolerance = 0.20                      
+    median_mz = np.median(X[:, 0])
+    # Tolérances fixées
+    mz_tolerance = median_mz * 10e-6   # 10 ppm
+    rt_tolerance = 0.2                 # 0.2 minute
+    dt_tolerance = 1.02                 # 1 ms + 2% tol de la lite
     
     # Normalisation
     X_scaled = np.zeros_like(X)
@@ -79,28 +123,29 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
         if sample_dir.is_dir() and list(Path("data/input/samples").glob(f"{sample_dir.name}*.parquet"))
     }
     
-    for cluster_id in sorted(set(clusters)):
-        if cluster_id == -1:
-            continue
-            
+    non_noise_clusters = [c for c in sorted(set(clusters)) if c != -1]
+    
+    for cluster_id in non_noise_clusters:
         cluster_data = df[df['cluster'] == cluster_id]
-        # Trouver la version la plus intense
-        max_index = cluster_data['intensity'].idxmax()
-        max_intensity_row = cluster_data.loc[max_index]
         
-        # Créer la feature avec moyennes
+        # Trouver la ligne avec l'intensité maximale
+        max_intensity_idx = cluster_data['intensity'].idxmax()
+        max_intensity_row = cluster_data.loc[max_intensity_idx]
+        
+        # Création de la feature : moyenne pour m/z, RT, DT, CCS
+        # Intensité max, et source basées sur le pic max
         feature = {
             'mz': cluster_data['mz'].mean(),
             'retention_time': cluster_data['retention_time'].mean(),
             'drift_time': cluster_data['drift_time'].mean(),
-            'CCS': cluster_data['CCS'].mean(),
+            'CCS': cluster_data['CCS'].mean() if 'CCS' in cluster_data.columns else None,
             'intensity': max_intensity_row['intensity'],
             'source_sample': max_intensity_row['sample'],
             'source_rt': max_intensity_row['orig_rt'],      
             'source_dt': max_intensity_row['orig_dt'],      
             'n_samples': cluster_data['sample'].nunique(),
             'samples': ','.join(sorted(cluster_data['sample'].unique())),
-            'feature_id': f"F{len(feature_info) + 1:04d}"  # Ajout d'un ID unique
+            'feature_id': f"F{len(feature_info) + 1:04d}"  # ID unique
         }
         
         feature_info.append(feature)
@@ -112,9 +157,11 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
     print("\n📊 Création de la matrice d'intensités...")
     intensity_matrix = pd.DataFrame(index=sample_names)
     
+    # L'indice dans feature_df correspond à l'ordre du cluster dans non_noise_clusters
     for idx, feature in feature_df.iterrows():
+        cluster_id = non_noise_clusters[idx]
+        cluster_data = df[df['cluster'] == cluster_id]
         feature_name = f"{feature['feature_id']}_mz{feature['mz']:.4f}"
-        cluster_data = df[df['cluster'] == idx]
         intensity_matrix[feature_name] = cluster_data.groupby('sample')['intensity'].max()
     
     return intensity_matrix, feature_df, raw_files
