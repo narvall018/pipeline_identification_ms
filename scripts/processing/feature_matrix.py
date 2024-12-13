@@ -67,12 +67,24 @@ def cluster_peaks(peaks_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+    """
+    Aligne les features (caractéristiques) entre plusieurs échantillons.
+
+    Paramètres :
+    - samples_dir (Path) : Répertoire contenant les sous-dossiers d'échantillons.
+
+    Retourne :
+    - intensity_matrix (pd.DataFrame) : Matrice des intensités des features alignées.
+    - feature_df (pd.DataFrame) : DataFrame avec les données des features alignées.
+    - raw_files (Dict) : Dictionnaire associant les noms d'échantillons aux chemins de leurs fichiers RAW.
+    """
+    
     print("\n🔄 Alignement des features entre échantillons...")
     
-    # Chargement efficace des pics
     all_peaks = []
     sample_names = []
     
+    # Parcours des sous-dossiers pour charger les fichiers de pics
     for sample_dir in samples_dir.glob("*"):
         if sample_dir.is_dir():
             peaks_file = sample_dir / "ms1" / "common_peaks.parquet"
@@ -82,65 +94,64 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
                     print(f"   ✓ Chargement de {sample_dir.name}: {len(peaks)} pics")
                     peaks = peaks.assign(
                         sample=sample_dir.name,
-                        orig_rt=peaks['retention_time'],
+                        orig_rt=peaks['retention_time'],  # Retient les valeurs d'origine pour analyse
                         orig_dt=peaks['drift_time']
                     )
                     all_peaks.append(peaks)
                     sample_names.append(sample_dir.name)
     
+    # Vérifie qu'il y a bien des données à traiter
     if not all_peaks:
         raise ValueError("Aucun pic trouvé dans les échantillons")
     
+    # Fusionne les données de tous les échantillons
     df = pd.concat(all_peaks, ignore_index=True)
     print(f"   ✓ Total: {len(df)} pics à travers {len(sample_names)} échantillons")
     
     print("\n🎯 Clustering des features...")
     X = df[['mz', 'drift_time', 'retention_time']].to_numpy()
     
-    # Calcul des tolérances et normalisation
-    median_mz = np.median(X[:, 0])  # Garder la médiane pour mz
+    median_mz = np.median(X[:, 0])  
     X_scaled = np.column_stack([
-        X[:, 0] / (median_mz * 10e-6),  # 10 ppm
-        X[:, 1] / 1.02,                 # 1.02 ms
-        X[:, 2] / 0.2                   # 0.2 min
+        X[:, 0] / (median_mz * 10e-6),  # Tolérance ppm pour m/z
+        X[:, 1] / 1.02,                 # Tolérance pour le drift time
+        X[:, 2] / 0.2                   # Tolérance pour le retention time
     ])
     
-    # Clustering optimisé
+    # Clustering avec DBSCAN
     clusters = DBSCAN(
-        eps=1.0,
+        eps=1.0,  # Distance maximale pour regrouper les points
         min_samples=1,
         algorithm='ball_tree',
-        n_jobs=-1
+        n_jobs=-1  # Utilise tous les cœurs disponibles
     ).fit_predict(X_scaled)
     
     df['cluster'] = clusters
-    non_noise_clusters = np.unique(clusters[clusters != -1])
+    non_noise_clusters = np.unique(clusters[clusters != -1])  
     
-    # Optimisation du traitement des features
     print("\n📊 Génération des features alignées...")
     
-    # Préparation des données pour le traitement vectoriel
     cluster_groups = df[df['cluster'].isin(non_noise_clusters)].groupby('cluster')
-    
-    # Création optimisée des features
     features = []
     intensities = {}
     
+    # Création des features alignées par cluster
     for cluster_id, cluster_data in cluster_groups:
         max_intensity_idx = cluster_data['intensity'].idxmax()
         max_intensity_row = cluster_data.loc[max_intensity_idx]
         
+        # Détermine les propriétés de la feature principale par cluster
         feature = {
             'mz': cluster_data['mz'].mean(),
             'retention_time': cluster_data['retention_time'].mean(),
             'drift_time': cluster_data['drift_time'].mean(),
-            'intensity': max_intensity_row['intensity'],
+            'intensity': max_intensity_row['intensity'],  # Intensité maximale dans le cluster
             'source_sample': max_intensity_row['sample'],
             'source_rt': max_intensity_row['orig_rt'],
             'source_dt': max_intensity_row['orig_dt'],
             'n_samples': cluster_data['sample'].nunique(),
             'samples': ','.join(sorted(cluster_data['sample'].unique())),
-            'feature_id': f"F{len(features) + 1:04d}"
+            'feature_id': f"F{len(features) + 1:04d}"  # Identifiant unique pour chaque feature
         }
         
         if 'CCS' in cluster_data.columns:
@@ -148,7 +159,7 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
         
         features.append(feature)
         
-        # Stockage efficace des intensités
+        # Enregistre les intensités par échantillon pour la feature
         feature_name = f"{feature['feature_id']}_mz{feature['mz']:.4f}"
         sample_intensities = cluster_data.groupby('sample')['intensity'].max()
         intensities[feature_name] = sample_intensities
@@ -156,11 +167,11 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
     feature_df = pd.DataFrame(features)
     print(f"   ✓ {len(feature_df)} features uniques détectées")
     
-    # Création optimisée de la matrice d'intensités
+    # Création de la matrice d'intensités alignées
     print("\n📊 Création de la matrice d'intensités...")
     intensity_matrix = pd.DataFrame(intensities, index=sample_names).fillna(0)
     
-    # Mapping des fichiers raw
+    # Mapping des fichiers raw pour chaque échantillon
     raw_files = {
         sample_dir.name: next(Path("data/input/samples").glob(f"{sample_dir.name}*.parquet"))
         for sample_dir in samples_dir.glob("*")
@@ -168,6 +179,7 @@ def align_features_across_samples(samples_dir: Path) -> Tuple[pd.DataFrame, pd.D
     }
     
     return intensity_matrix, feature_df, raw_files
+
 
 
 
