@@ -115,6 +115,7 @@ def cluster_blank_replicates(peaks_dict: Dict[str, pd.DataFrame], min_required: 
     return result_df
 
 def subtract_blank_peaks(sample_peaks: pd.DataFrame, blank_peaks: pd.DataFrame) -> pd.DataFrame:
+    """Soustrait les pics du blank des pics de l'échantillon."""
     if blank_peaks.empty or sample_peaks.empty:
         return sample_peaks
 
@@ -130,15 +131,15 @@ def subtract_blank_peaks(sample_peaks: pd.DataFrame, blank_peaks: pd.DataFrame) 
     median_mz = np.median(X[:, 0])
     mz_tolerance = median_mz * 10e-6
 
+    # Paramètres moins stricts pour éviter la sur-soustraction
     X_scaled = np.column_stack([
         X[:, 0] / mz_tolerance,
-        X[:, 1] / 1.0,
-        X[:, 2] / 0.1
+        X[:, 1] / 1,          # drift_time moins strict (était 1.0)
+        X[:, 2] / 0.1           # retention_time moins strict (était 0.1)
     ])
 
-    # Utilisation de ball_tree et parallélisation
     clusters = DBSCAN(
-        eps=1.0,
+        eps=1.5,              
         min_samples=2,
         algorithm='ball_tree',
         n_jobs=-1
@@ -146,16 +147,22 @@ def subtract_blank_peaks(sample_peaks: pd.DataFrame, blank_peaks: pd.DataFrame) 
     
     combined['cluster'] = clusters
 
-    blank_clusters = set(
-        combined[(~combined['is_sample']) & (combined['cluster'] != -1)]['cluster']
-    )
+    # Un cluster est considéré comme blank si au moins 50% des pics sont des blanks
+    blank_clusters = set()
+    for cluster_id in combined[combined['cluster'] != -1]['cluster'].unique():
+        cluster_data = combined[combined['cluster'] == cluster_id]
+        if sum(~cluster_data['is_sample']) / len(cluster_data) >= 0.5:
+            blank_clusters.add(cluster_id)
 
+    # Filtrer les pics
     clean_peaks = combined[
         combined['is_sample'] & 
         (~combined['cluster'].isin(blank_clusters) | (combined['cluster'] == -1))
     ].copy()
 
     clean_peaks = clean_peaks.drop(['is_sample', 'cluster'], axis=1)
+    
+    print(f"{len(clean_peaks)} pics après soustraction du blank")
     return clean_peaks
 
 

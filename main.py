@@ -1,6 +1,7 @@
 #main.py
 #-*- coding:utf-8 -*-
 
+import gc 
 import logging
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -88,7 +89,7 @@ class SampleResult:
         # Extraire les statistiques des logs
         self.initial_peaks = 0
         self.after_clustering = 0
-        self.after_blank = 0
+        self.after_blank = len(peaks_df) if not peaks_df.empty else 0  # Nombre de pics finaux
         self.final_peaks = len(peaks_df) if not peaks_df.empty else 0
         
         for line in logs.split('\n'):
@@ -102,9 +103,9 @@ class SampleResult:
                     self.after_clustering = int(line.split(": ")[1])
                 except:
                     pass
-            elif "pics après soustraction du blank" in line:
+            elif "Pics après soustraction" in line:
                 try:
-                    self.after_blank = int(line.split(" ")[3])
+                    self.after_blank = int(line.split(": ")[1])
                 except:
                     pass
 
@@ -205,15 +206,15 @@ def generate_visualizations(output_dir: Path) -> None:
             (generate_similarity_heatmap, output_dir),
             (generate_level1_heatmap, output_dir),
             (generate_level12_heatmap, output_dir),
-            (generate_level123_heatmap, output_dir),
-            (generate_tics, output_dir)
+            (generate_level123_heatmap, output_dir)
+            #,(generate_tics, output_dir)
         ]
 
         # Exécution parallèle des tâches
         max_workers = min(mp.cpu_count(), len(tasks))
 
         futures_to_task = {}
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=2) as executor:
             # Soumettre toutes les tâches
             for func, arg in tasks:
                 future = executor.submit(func, arg)
@@ -317,9 +318,9 @@ def process_samples_parallel(
     output_base_dir: Path,
     max_workers: int = None
 ) -> Dict[str, SampleResult]:
-    """Traite tous les échantillons en parallèle avec barre de progression."""
+    """Traite tous les échantillons en parallèle avec gestion de la mémoire."""
     if max_workers is None:
-        max_workers = mp.cpu_count()
+        max_workers = min(2, mp.cpu_count())
     
     total_samples = len(replicate_groups)    
     print("\n" + "="*80)
@@ -327,22 +328,74 @@ def process_samples_parallel(
     print("="*80)
     
     total_start_time = time.time()
-    
-    process_args = [(base_name, replicates, blank_peaks, calibrator, output_base_dir)
-                   for base_name, replicates in replicate_groups.items()]
-    
     results = {}
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_name = {
-            executor.submit(process_single_sample, args): args[0]
-            for args in process_args
-        }
-        
-        with tqdm(total=len(future_to_name), unit="échantillon") as pbar:
-            for future in as_completed(future_to_name):
-                base_name, result = future.result()
-                results[base_name] = result
-                pbar.update(1)
+    
+    # Traiter les échantillons par petits groupes
+    batch_size = 2  # Réduit à 2 échantillons à la fois
+    sample_items = list(replicate_groups.items())
+    
+    with tqdm(total=len(sample_items), unit="échantillon") as pbar:
+        for i in range(0, len(sample_items), batch_size):
+            batch_items = sample_items[i:i + batch_size]
+            
+            process_args = [
+                (base_name, replicates, blank_peaks, calibrator, output_base_dir)
+                for base_name, replicates in batch_items
+            ]
+            
+            try:
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_name = {
+                        executor.submit(process_single_sample, args): args[0]
+                        for args in process_args
+                    }
+                    
+                    for future in as_completed(future_to_name):
+                        base_name = future_to_name[future]
+                        try:
+                            _, result = future.result()
+                            results[base_name] = result
+                        except Exception as e:
+                            print(f"\n❌ Erreur pour {base_name}: {str(e)}")
+                            # Créer un SampleResult vide pour les échantillons en erreur
+                            results[base_name] = SampleResult(
+                                base_name, 
+                                pd.DataFrame(), 
+                                0.0,
+                                f"Erreur: {str(e)}"
+                            )
+                        finally:
+                            pbar.update(1)
+                
+            except Exception as e:
+                print(f"\n❌ Erreur dans le batch {i//batch_size + 1}: {str(e)}")
+                # Gérer les échantillons non traités dans ce batch
+                for name, _ in batch_items:
+                    if name not in results:
+                        results[name] = SampleResult(
+                            name,
+                            pd.DataFrame(),
+                            0.0,
+                            f"Erreur batch: {str(e)}"
+                        )
+                        pbar.update(1)
+            
+            # Force la libération de la mémoire
+            gc.collect()
+            
+            # Sauvegarde intermédiaire des statistiques
+            stats_df = pd.DataFrame([{
+                'Échantillon': r.name,
+                'Temps (s)': r.processing_time,
+                'Pics initiaux': r.initial_peaks,
+                'Pics après clustering': r.after_clustering,
+                'Pics après blank': r.after_blank,
+                'Pics finaux': r.final_peaks,
+                'Statut': 'Succès' if r.success else 'Échec'
+            } for r in results.values()])
+            
+            stats_file = output_base_dir / "processing_statistics.csv"
+            stats_df.to_csv(stats_file, index=False)
     
     total_time = time.time() - total_start_time
     success_count = sum(1 for r in results.values() if r.success)
@@ -356,7 +409,7 @@ def process_samples_parallel(
     print(f"Échantillons traités: {success_count}/{len(results)}")
     if failed_count > 0:
         print(f"❌ Échantillons en échec: {failed_count}")
-        
+    
     print("\nDétails par échantillon:")
     for name, result in results.items():
         status = "✓" if result.success else "✗"
@@ -365,25 +418,29 @@ def process_samples_parallel(
         print(f"  • Pics initiaux: {result.initial_peaks}")
         if result.success:
             print(f"  • Pics après clustering: {result.after_clustering}")
-            print(f"  • Pics après blank: {result.final_peaks}")
+            print(f"  • Pics après blank: {result.after_blank}")
             print(f"  • Pics finaux: {result.final_peaks}")
-            if result.final_peaks > 0:
-                ccs_values = result.peaks_df['CCS']
-                print(f"  • CCS min-max: {ccs_values.min():.2f} - {ccs_values.max():.2f} Å²")
-                print(f"  • CCS moyenne: {ccs_values.mean():.2f} Å²")
+            peaks_df = result.peaks_df
+            if not peaks_df.empty and 'CCS' in peaks_df.columns:
+                ccs_stats = peaks_df['CCS'].agg(['min', 'max', 'mean'])
+                print(f"  • CCS min-max: {ccs_stats['min']:.2f} - {ccs_stats['max']:.2f} Å²")
+                print(f"  • CCS moyenne: {ccs_stats['mean']:.2f} Å²")
+        else:
+            print(f"  • Erreur: {result.logs}")
     
-    stats_df = pd.DataFrame([{
+    # Sauvegarde finale des statistiques
+    final_stats_df = pd.DataFrame([{
         'Échantillon': r.name,
         'Temps (s)': r.processing_time,
         'Pics initiaux': r.initial_peaks,
         'Pics après clustering': r.after_clustering,
-        'Pics après blank': r.final_peaks,
+        'Pics après blank': r.after_blank,
         'Pics finaux': r.final_peaks,
         'Statut': 'Succès' if r.success else 'Échec'
     } for r in results.values()])
     
     stats_file = output_base_dir / "processing_statistics.csv"
-    stats_df.to_csv(stats_file, index=False)
+    final_stats_df.to_csv(stats_file, index=False)
     print(f"\nStatistiques sauvegardées dans {stats_file}")
     
     return results

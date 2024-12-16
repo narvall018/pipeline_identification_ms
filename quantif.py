@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import sys
 import os
+import pandas as pd
 
 # Ajout du dossier courant au PYTHONPATH
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,7 @@ def main() -> None:
             compounds_file=compounds_file,
             calibration_file=calibration_file
         )
+        #summary_df = pd.read_csv('output/quantification/compounds_summary.csv')
         
         if not summary_df.empty:
             summary_df.to_csv(output_dir / "compounds_summary.csv", index=False)
