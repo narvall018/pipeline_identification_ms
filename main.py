@@ -5,24 +5,35 @@ import gc
 import logging
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
-import numpy as np
-import logging
 import warnings
 import pandas as pd
 from pathlib import Path
-from typing import Union, List, Dict, Tuple
-from queue import Queue
 from io import StringIO
 import sys
-from contextlib import redirect_stdout
 import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt 
+from typing import Dict, Union, List
+
+
+# Configuration
 from scripts.config.config import Config
-from scripts.utils.io_handlers import read_parquet_data, save_peaks
-from scripts.processing.peak_detection import prepare_data, detect_peaks, cluster_peaks
+
+# Classes pour le traitement
+from scripts.processing.peak_detection import PeakDetector
+from scripts.processing.blank_processing import BlankProcessor
+from scripts.processing.replicate_processing import ReplicateProcessor
 from scripts.processing.ccs_calibration import CCSCalibrator
 from scripts.processing.identification import CompoundIdentifier
+from scripts.processing.feature_matrix import FeatureProcessor
+from scripts.utils.replicate_handling import ReplicateHandler
+
+
+# Utilitaires
+from scripts.utils.io_handlers import IOHandler
+from scripts.utils.replicate_handling import ReplicateHandler
+
+# Visualisations 
 from scripts.visualization.plotting import (
     plot_unique_molecules_per_sample,
     plot_level1_molecules_per_sample,
@@ -35,20 +46,10 @@ from scripts.visualization.plotting import (
     plot_tics_interactive,
     analyze_categories
 )
-from scripts.utils.replicate_handling import group_replicates
-from scripts.processing.replicate_processing import process_sample_with_replicates
-from scripts.processing.blank_processing import (
-    process_blank_with_replicates,
-    subtract_blank_peaks
-)
-from scripts.processing.feature_matrix import create_feature_matrix
-
-
 
 # Suppression des warnings pandas
 warnings.filterwarnings('ignore')
 pd.options.mode.chained_assignment = None
-
 
 # Initialiser le logger
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ class SampleResult:
         # Extraire les statistiques des logs
         self.initial_peaks = 0
         self.after_clustering = 0
-        self.after_blank = len(peaks_df) if not peaks_df.empty else 0  # Nombre de pics finaux
+        self.after_blank = len(peaks_df) if not peaks_df.empty else 0
         self.final_peaks = len(peaks_df) if not peaks_df.empty else 0
         
         for line in logs.split('\n'):
@@ -109,32 +110,76 @@ class SampleResult:
                 except:
                     pass
 
-
-def process_blank_files(blank_files: List[Path]) -> pd.DataFrame:
-    """Traite tous les fichiers blanks."""
-    blank_peaks = pd.DataFrame()
+def process_single_sample(
+    args: tuple
+) -> tuple:
+    """Traite un seul échantillon en capturant sa sortie."""
+    base_name, replicates, blank_peaks, calibrator, output_base_dir = args
+    start_time = time.time()
     
-    # Message concernant la présence ou l'absence de blanks
-    if blank_files:
-        print(f"   ✓ {len(blank_files)} fichier(s) blank trouvé(s):")
-        for blank_file in blank_files:
-            print(f"      - {blank_file.name}")
-    else:
-        print("   ℹ️ Aucun blank trouvé dans data/input/blanks/")
+    with CaptureOutput() as output:
+        try:
+            # Instanciation des processeurs
+            replicate_processor = ReplicateProcessor()
+            blank_processor = BlankProcessor()
             
-    if blank_files:
-        for blank_file in blank_files:
-            blank_peaks_group = process_blank_with_replicates(
-                blank_file.stem,
-                [blank_file],
-                Path("data/intermediate/blanks")
+            # 1. Traitement des réplicats
+            common_peaks = replicate_processor.process_sample_with_replicates(
+                base_name,
+                replicates,
+                output_base_dir
             )
-            if not blank_peaks_group.empty:
-                blank_peaks = pd.concat([blank_peaks, blank_peaks_group])
-        if not blank_peaks.empty:
-            print(f"   ✓ {len(blank_peaks)} pics de blank détectés")
             
-    return blank_peaks
+            if common_peaks.empty:
+                print(f"✗ Pas de pics trouvés pour {base_name}")
+                return base_name, SampleResult(
+                    base_name, pd.DataFrame(), 
+                    time.time() - start_time, 
+                    output.getvalue()
+                )
+            
+            # 2. Soustraction du blank 
+            if not blank_peaks.empty:
+                clean_peaks = blank_processor.subtract_blank_peaks(common_peaks, blank_peaks)
+            else:
+                clean_peaks = common_peaks
+                
+            if clean_peaks.empty:
+                print(f"✗ Pas de pics après soustraction du blank pour {base_name}")
+                return base_name, SampleResult(
+                    base_name, pd.DataFrame(), 
+                    time.time() - start_time, 
+                    output.getvalue()
+                )
+            
+            # 3. Calibration CCS 
+            peaks_with_ccs = calibrator.calculate_ccs(clean_peaks)
+            
+            if not peaks_with_ccs.empty:
+                print(f"✓ CCS calculées pour {len(peaks_with_ccs)} pics")
+                print(f"✓ Plage de CCS: {peaks_with_ccs['CCS'].min():.2f} - {peaks_with_ccs['CCS'].max():.2f} Å²")
+                print(f"✓ CCS moyenne: {peaks_with_ccs['CCS'].mean():.2f} Å²")
+                
+                # Sauvegarde
+                io_handler = IOHandler()
+                output_dir = output_base_dir / base_name / "ms1"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                output_file = output_dir / "common_peaks.parquet"
+                io_handler.save_results(peaks_with_ccs, output_file)
+                
+            return base_name, SampleResult(
+                base_name, peaks_with_ccs,
+                time.time() - start_time,
+                output.getvalue()
+            )
+            
+        except Exception as e:
+            print(f"❌ Erreur lors du traitement de {base_name}: {str(e)}")
+            return base_name, SampleResult(
+                base_name, pd.DataFrame(),
+                time.time() - start_time,
+                output.getvalue()
+            )
 
 def generate_molecules_per_sample(output_dir: Path):
     fig = plot_unique_molecules_per_sample(output_dir)
@@ -186,7 +231,6 @@ def generate_level123_heatmap(output_dir: Path):
 def generate_tics(output_dir: Path):
     plot_tics_interactive(Path("data/input/samples"), output_dir)
 
-
 def generate_visualizations(output_dir: Path) -> None:
     """Génère toutes les visualisations de la pipeline en parallèle."""
     try:
@@ -235,82 +279,6 @@ def generate_visualizations(output_dir: Path) -> None:
     except Exception as e:
         print(f"❌ Erreur lors de la création des visualisations: {str(e)}")
         raise
-
-
-def process_single_sample(
-    args: Tuple[str, List[Path], pd.DataFrame, CCSCalibrator, Path]
-) -> Tuple[str, SampleResult]:
-    """Traite un seul échantillon en capturant sa sortie."""
-    base_name, replicates, blank_peaks, calibrator, output_base_dir = args
-    start_time = time.time()
-    
-    with CaptureOutput() as output:
-        try:
-            # 1. Traitement des réplicats 📊
-            common_peaks = process_sample_with_replicates(
-                base_name,
-                replicates,
-                output_base_dir
-            )
-            
-            if common_peaks.empty:
-                print(f"✗ Pas de pics trouvés pour {base_name}")
-                return base_name, SampleResult(
-                    base_name, pd.DataFrame(), 
-                    time.time() - start_time, 
-                    output.getvalue()
-                )
-            
-            # 2. Soustraction du blank 
-            if not blank_peaks.empty:
-                clean_peaks = subtract_blank_peaks(common_peaks, blank_peaks)
-            else:
-                clean_peaks = common_peaks
-                
-            if clean_peaks.empty:
-                print(f"✗ Pas de pics après soustraction du blank pour {base_name}")
-                return base_name, SampleResult(
-                    base_name, pd.DataFrame(), 
-                    time.time() - start_time, 
-                    output.getvalue()
-                )
-            
-            # 3. Calibration CCS 
-            peaks_with_ccs = calibrator.calculate_ccs(clean_peaks)
-            
-            # Mise à jour des statistiques
-            peaks_stats = {
-                'initial': len(common_peaks),
-                'after_clustering': len(clean_peaks),  # Correspond aux pics après clustering
-                'after_blank': len(clean_peaks),  # Nombre identique aux pics finaux
-                'final': len(peaks_with_ccs)
-            }
-            
-            if not peaks_with_ccs.empty:
-                print(f"✓ CCS calculées pour {len(peaks_with_ccs)} pics")
-                print(f"✓ Plage de CCS: {peaks_with_ccs['CCS'].min():.2f} - {peaks_with_ccs['CCS'].max():.2f} Å²")
-                print(f"✓ CCS moyenne: {peaks_with_ccs['CCS'].mean():.2f} Å²")
-                
-                # Sauvegarde
-                output_dir = output_base_dir / base_name / "ms1"
-                output_dir.mkdir(parents=True, exist_ok=True)
-                output_file = output_dir / "common_peaks.parquet"
-                peaks_with_ccs.to_parquet(output_file)
-                
-            return base_name, SampleResult(
-                base_name, peaks_with_ccs,
-                time.time() - start_time,
-                output.getvalue()
-            )
-            
-        except Exception as e:
-            print(f"❌ Erreur lors du traitement de {base_name}: {str(e)}")
-            return base_name, SampleResult(
-                base_name, pd.DataFrame(),
-                time.time() - start_time,
-                output.getvalue()
-            )
-
 def process_samples_parallel(
     replicate_groups: Dict[str, List[Path]],
     blank_peaks: pd.DataFrame,
@@ -445,7 +413,6 @@ def process_samples_parallel(
     
     return results
 
-
 def main() -> None:
     """Point d'entrée principal de la pipeline."""
     setup_logging()
@@ -454,9 +421,15 @@ def main() -> None:
     print("=" * 80)
 
     try:
+        # Initialisation des handlers et processeurs
+        io_handler = IOHandler()
+        replicate_handler = ReplicateHandler()
+        blank_processor = BlankProcessor()
+        feature_processor = FeatureProcessor()
+
         # 1. Chargement des données de calibration CCS
         print("\n📈 Chargement des données de calibration CCS...")
-        calibration_file = Path("data/input/calibration/CCS_calibration_data.csv")
+        calibration_file = Config.PATHS.INPUT_CALIBRANTS / "CCS_calibration_data.csv"
         if not calibration_file.exists():
             raise FileNotFoundError(f"Fichier de calibration non trouvé : {calibration_file}")
         calibrator = CCSCalibrator(calibration_file)
@@ -466,50 +439,56 @@ def main() -> None:
         print("\n📚 Initialisation de l'identification...")
         identifier = CompoundIdentifier()
         print("   ✓ Base de données chargée avec succès")
-
-        # 3. Recherche des fichiers
+        
+        # Recherche des fichiers
         print("\n📁 Recherche des blanks...")
         blank_dir = Path("data/input/blanks")
         blank_files = list(blank_dir.glob("*.parquet"))
+
+        # Affichage des informations sur les blanks
         if blank_files:
             print(f"   ✓ {len(blank_files)} fichier(s) blank trouvé(s):")
             for blank_file in blank_files:
                 print(f"      - {blank_file.name}")
         else:
-            print("   ℹ️ Aucun blank trouvé dans data/input/blanks/")
+            print("   ℹ️ Aucun fichier blank trouvé dans data/input/blanks/")
 
         print("\n📁 Recherche des échantillons...")
-        samples_dir = Path(Config.INPUT_SAMPLES)
+        samples_dir = Config.PATHS.INPUT_SAMPLES
         sample_files = list(samples_dir.glob("*.parquet"))
 
         if not sample_files:
             raise ValueError("Aucun fichier d'échantillon trouvé.")
             
-        replicate_groups = group_replicates(sample_files)
+        replicate_handler = ReplicateHandler()
+        replicate_groups = replicate_handler.group_replicates(sample_files)
         print(f"   ✓ {len(replicate_groups)} échantillons trouvés:")
         for base_name, replicates in replicate_groups.items():
             print(f"      - {base_name}: {len(replicates)} réplicat(s)")
 
+        # 5. Traitement des blanks
+        print("\n" + "="*80)
+        print("TRAITEMENT DES BLANKS")
+        print("=" * 80)
+        
+        blank_peaks = pd.DataFrame()
+        if blank_files:
+            blank_peaks = blank_processor.process_blank_with_replicates(
+                blank_files[0].stem,
+                blank_files,
+                Config.PATHS.INTERMEDIATE_DIR / "blanks"
+            )
+
+# 6. Traitement des échantillons
         print("\n" + "="*80)
         print("TRAITEMENT DES ÉCHANTILLONS")
         print("=" * 80)
 
-        # 4. Traitement des blanks
-        if blank_files:
-            blank_peaks = process_blank_with_replicates(
-                blank_files[0].stem,
-                blank_files,
-                Path("data/intermediate/blanks")
-            )
-        else:
-            blank_peaks = pd.DataFrame()
-
-        # 5. Traitement parallèle des échantillons
         results = process_samples_parallel(
             replicate_groups,
             blank_peaks,
             calibrator,
-            Path("data/intermediate/samples")
+            Config.PATHS.INTERMEDIATE_SAMPLES
         )
         
         # Vérifier si des échantillons ont été traités avec succès
@@ -520,11 +499,11 @@ def main() -> None:
         print("ALIGNEMENT DES FEATURES")
         print("="*80)
         
-        # 6. Feature Matrix et identification
+        # 7. Feature Matrix et identification
         print("\n📊 Création de la matrice des features...")
-        create_feature_matrix(
-            input_dir=Path("data/intermediate/samples"),
-            output_dir=Path("output/feature_matrix"),
+        feature_processor.create_feature_matrix(
+            input_dir=Config.PATHS.INTERMEDIATE_SAMPLES,
+            output_dir=Config.PATHS.OUTPUT_DIR / "feature_matrix",
             identifier=identifier
         )
 
@@ -532,8 +511,8 @@ def main() -> None:
         print("GÉNÉRATION DES VISUALISATIONS")
         print("="*80)
         
-        # 7. Visualisations
-        output_dir = Path("output")
+        # 8. Visualisations
+        output_dir = Config.PATHS.OUTPUT_DIR
         generate_visualizations(output_dir)
         
         print("\n" + "="*80)
@@ -550,11 +529,11 @@ def main() -> None:
         print("\n📊 Analyse des catégories de molécules...")
         analyze_categories(output_dir)
 
+        # Affichage du récapitulatif
         total_time = time.time() - start_time
         minutes = int(total_time // 60)
         seconds = int(total_time % 60)
         
-
         print("\n" + "="*80)
         print(" ✅ FIN DU TRAITEMENT")
         print("="*80)
@@ -573,4 +552,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

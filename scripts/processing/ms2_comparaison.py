@@ -1,226 +1,193 @@
 #scripts/processing/ms2_comparaison.py
 #-*- coding:utf-8 -*-
 
-
-# Importation des modules
 import logging
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from scipy.spatial.distance import cosine
-from ..utils.matching_utils import assign_confidence_level 
+from ..config.config import Config
+from ..utils.matching_utils import assign_confidence_level
+from tqdm import tqdm
 
-# Initialiser le logger
-logger = logging.getLogger(__name__)
+class MS2Comparator:
+    """Classe pour comparer des spectres MS2 et calculer leurs similarités."""
+    
+    def __init__(self, tolerance_mz: float = 0.01):
+        """
+        Initialise le comparateur MS2.
+        
+        Args:
+            tolerance_mz: Tolérance en m/z pour la comparaison des pics (en Da)
+        """
+        self.tolerance_mz = tolerance_mz
+        self.logger = logging.getLogger(__name__)
 
+    def normalize_spectrum(
+        self,
+        mz_list: List[float],
+        intensity_list: List[float]
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Normalise les intensités d'un spectre par rapport au pic le plus intense.
+        
+        Args:
+            mz_list: Liste des m/z
+            intensity_list: Liste des intensités correspondantes
+            
+        Returns:
+            Tuple[List[float], List[float]]: m/z et intensités normalisées
+        """
+        try:
+            # Vérification des listes vides
+            if not mz_list or not intensity_list:
+                return [], []
 
-class MS2Comparator(object):
-	"""
-	Classe pour comparer des spectres MS2 avec une tolérance donnée.
+            # Normalisation
+            intensity_array = np.array(intensity_list)
+            max_intensity = np.max(intensity_array)
 
-	Attributes:
-		tolerance_mz (float): Tolérance en m/z pour la comparaison des pics (en Da).
-	"""
-	def __init__(self, tolerance_mz: float = 0.01) -> "MS2Comparator":
-		"""
-		Initialise le comparateur MS2.
+            if max_intensity == 0:
+                return [], []
 
-		Args:
-			tolerance_mz (float): Tolérance en m/z pour la comparaison des pics (en Da).
+            normalized_intensities = (intensity_array / max_intensity) * 1000
 
-		Returns:
-			MS2Comparator: Un objet de la classe MS2Comparator.
-		"""
-		# Initialise la tolérance m/z utilisée pour la comparaison des pics
-		self.tolerance_mz: float = tolerance_mz
+            return mz_list, normalized_intensities.tolist()
 
+        except Exception as e:
+            self.logger.error(f"Erreur dans la normalisation du spectre : {str(e)}")
+            return [], []
 
-	def normalize_spectrum(self, mz_list: List[float], intensity_list: List[float]) -> Tuple[List[float], List[float]]:
-		"""
-		Normalise les intensités d'un spectre par rapport au pic le plus intense.
+    def align_spectra(
+        self,
+        exp_mz: List[float],
+        exp_int: List[float],
+        ref_mz: List[float],
+        ref_int: List[float]
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Aligne deux spectres en fonction des m/z communs.
+        
+        Args:
+            exp_mz: m/z expérimentaux
+            exp_int: Intensités expérimentales
+            ref_mz: m/z de référence
+            ref_int: Intensités de référence
+            
+        Returns:
+            Tuple[List[float], List[float]]: Intensités alignées
+        """
+        if not exp_mz or not ref_mz:
+            return [], []
 
-		Args:
-			mz_list (List[float]): Liste des m/z.
-			intensity_list (List[float]): Liste des intensités correspondantes.
+        aligned_exp_int = []
+        aligned_ref_int = []
 
-		Returns:
-			Tuple[List[float], List[float]]: Liste des m/z et intensités normalisées, ou des listes vides si les entrées sont invalides.
-		"""
-		# Vérifie si les listes de m/z ou d'intensités sont vides
-		if not mz_list or not intensity_list:
-			# Retourne des listes vides si l'une des deux listes est absente
-			return [], []
+        for i, mz_exp in enumerate(exp_mz):
+            matched = False
+            for j, mz_ref in enumerate(ref_mz):
+                if abs(mz_exp - mz_ref) <= self.tolerance_mz:
+                    aligned_exp_int.append(exp_int[i])
+                    aligned_ref_int.append(ref_int[j])
+                    matched = True
+                    break
+            
+            if not matched:
+                aligned_exp_int.append(exp_int[i])
+                aligned_ref_int.append(0)
 
-		# Convertit la liste des intensités en tableau numpy pour les calculs
-		intensity_array = np.array(intensity_list)
+        for j, mz_ref in enumerate(ref_mz):
+            if all(abs(mz_exp - mz_ref) > self.tolerance_mz for mz_exp in exp_mz):
+                aligned_exp_int.append(0)
+                aligned_ref_int.append(ref_int[j])
 
-		# Calcule l'intensité maximale dans le tableau des intensités
-		max_intensity = np.max(intensity_array)
+        return aligned_exp_int, aligned_ref_int
 
-		# Vérifie si l'intensité maximale est égale à zéro
-		if max_intensity == 0:
-			# Retourne des listes vides si toutes les intensités sont nulles
-			return [], []
+    def calculate_similarity_score(
+        self,
+        exp_mz: List[float],
+        exp_int: List[float],
+        ref_mz: List[float],
+        ref_int: List[float]
+    ) -> float:
+        """
+        Calcule le score de similarité entre deux spectres.
+        
+        Args:
+            exp_mz: m/z expérimentaux
+            exp_int: Intensités expérimentales
+            ref_mz: m/z de référence
+            ref_int: Intensités de référence
+            
+        Returns:
+            float: Score de similarité (0-1)
+        """
+        try:
+            # Vérification et conversion des données d'entrée
+            exp_mz = exp_mz if isinstance(exp_mz, list) else ([] if pd.isna(exp_mz).any() else exp_mz.tolist())
+            exp_int = exp_int if isinstance(exp_int, list) else ([] if pd.isna(exp_int).any() else exp_int.tolist())
+            ref_mz = ref_mz if isinstance(ref_mz, list) else ([] if pd.isna(ref_mz).any() else ref_mz.tolist())
+            ref_int = ref_int if isinstance(ref_int, list) else ([] if pd.isna(ref_int).any() else ref_int.tolist())
 
-		# Normalise les intensités en fonction de l'intensité maximale
-		normalized_intensities = (intensity_array / max_intensity) * 1000
+            if not exp_mz or not ref_mz:
+                return 0.0
 
-		# Retourne le tuple contenant la liste des m/z et les intensités normalisées
-		return mz_list, normalized_intensities.tolist()
+            # Normalisation
+            exp_mz, exp_int = self.normalize_spectrum(exp_mz, exp_int)
+            ref_mz, ref_int = self.normalize_spectrum(ref_mz, ref_int)
 
+            if not exp_int or not ref_int:
+                return 0.0
 
-	def align_spectra(
-		self,
-		exp_mz: List[float],
-		exp_int: List[float],
-		ref_mz: List[float],
-		ref_int: List[float]
-	) -> Tuple[List[float], List[float]]:
-		"""
-		Aligne deux spectres en fonction des m/z communs dans une tolérance donnée.
+            # Alignement
+            aligned_exp, aligned_ref = self.align_spectra(exp_mz, exp_int, ref_mz, ref_int)
 
-		Args:
-			exp_mz (List[float]): Liste des m/z expérimentaux.
-			exp_int (List[float]): Liste des intensités expérimentales.
-			ref_mz (List[float]): Liste des m/z de référence.
-			ref_int (List[float]): Liste des intensités de référence.
+            if not aligned_exp or not aligned_ref:
+                return 0.0
 
-		Returns:
-			Tuple[List[float], List[float]]: Intensités alignées pour les spectres expérimental et de référence.
-		"""
-		# Vérifie si les m/z expérimentaux ou les m/z de référence sont vides
-		if not exp_mz or not ref_mz:
-			# Retourne un tuple de listes vides si l'une des listes est absente
-			return [], []
+            # Calcul de similarité
+            similarity = 1 - cosine(aligned_exp, aligned_ref)
+            return max(0, similarity)
 
-		# Initialise les listes pour stocker les intensités alignées
-		aligned_exp_int = []
-		aligned_ref_int = []
+        except Exception as e:
+            self.logger.error(f"Erreur dans le calcul du score de similarité : {str(e)}")
+            return 0.0
 
-		# Parcourt chaque m/z expérimental
-		for i, mz_exp in enumerate(exp_mz):
-			# Initialise une variable pour indiquer si un match a été trouvé
-			matched = False
-
-			# Parcourt chaque m/z de référence
-			for j, mz_ref in enumerate(ref_mz):
-				# Vérifie si les m/z sont dans la tolérance définie
-				if abs(mz_exp - mz_ref) <= self.tolerance_mz:
-					# Ajoute les intensités correspondantes aux listes alignées
-					aligned_exp_int.append(exp_int[i])
-					aligned_ref_int.append(ref_int[j])
-
-					# Indique qu'un match a été trouvé et sort de la boucle interne
-					matched = True
-					break
-
-			# Si aucun match n'a été trouvé pour le m/z expérimental
-			if not matched:
-				# Ajoute l'intensité expérimentale et une intensité de référence nulle
-				aligned_exp_int.append(exp_int[i])
-				aligned_ref_int.append(0)
-
-		# Parcourt les m/z de référence non alignés
-		for j, mz_ref in enumerate(ref_mz):
-			# Vérifie si le m/z de référence n'a pas de correspondance dans les m/z expérimentaux
-			if all(abs(mz_exp - mz_ref) > self.tolerance_mz for mz_exp in exp_mz):
-				# Ajoute une intensité expérimentale nulle et l'intensité de référence
-				aligned_exp_int.append(0)
-				aligned_ref_int.append(ref_int[j])
-
-		# Retourne les intensités alignées pour les spectres expérimental et de référence
-		return aligned_exp_int, aligned_ref_int
-
-
-	def calculate_similarity_score(
-		self, exp_mz: List[float],
-		exp_int: List[float],
-		ref_mz: List[float],
-		ref_int: List[float]
-	) -> float:
-		"""
-		Calcule le score de similarité entre deux spectres en utilisant la distance cosinus.
-
-		Args:
-			exp_mz (List[float]): Liste des m/z expérimentaux.
-			exp_int (List[float]): Liste des intensités expérimentales.
-			ref_mz (List[float]): Liste des m/z de référence.
-			ref_int (List[float]): Liste des intensités de référence.
-
-		Returns:
-			float: Score de similarité (entre 0 et 1). Retourne 0 en cas d'erreur ou de données insuffisantes.
-		"""
-		try:
-			# Vérification et conversion des données d'entrée en listes
-			exp_mz = exp_mz if isinstance(exp_mz, list) else ([] if pd.isna(exp_mz).any() else exp_mz.tolist())
-			exp_int = exp_int if isinstance(exp_int, list) else ([] if pd.isna(exp_int).any() else exp_int.tolist())
-			ref_mz = ref_mz if isinstance(ref_mz, list) else ([] if pd.isna(ref_mz).any() else ref_mz.tolist())
-			ref_int = ref_int if isinstance(ref_int, list) else ([] if pd.isna(ref_int).any() else ref_int.tolist())
-
-			# Vérifie si les spectres contiennent des données valides
-			if not exp_mz or not ref_mz:
-				return 0.0
-
-			# Normalisation des spectres expérimentaux et de référence
-			exp_mz, exp_int = self.normalize_spectrum(exp_mz, exp_int)
-			ref_mz, ref_int = self.normalize_spectrum(ref_mz, ref_int)
-
-			# Vérifie si les spectres normalisés contiennent des intensités valides
-			if not exp_int or not ref_int:
-				return 0.0
-
-			# Alignement des spectres pour une comparaison directe
-			aligned_exp, aligned_ref = self.align_spectra(exp_mz, exp_int, ref_mz, ref_int)
-
-			# Vérifie si l'alignement a produit des résultats
-			if not aligned_exp or not aligned_ref:
-				return 0.0
-
-			# Calcul du score de similarité en utilisant la distance cosinus
-			similarity = 1 - cosine(aligned_exp, aligned_ref)
-
-			# Retourne le score en s'assurant qu'il est positif (éviter les erreurs d'arrondi)
-			return max(0, similarity)
-
-		except Exception as e:
-			# Log toute erreur rencontrée pendant le calcul
-			logger.error(f"Erreur dans le calcul du score de similarité : {str(e)}")
-			return 0.0
-
-
-# Dans ms2_comparaison.py, modifions la fonction add_ms2_scores :
 
 def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
     """
     Ajoute les scores de similarité MS2 et recalcule les niveaux de confiance.
+    
+    Args:
+        matches_df: DataFrame des correspondances
+        identifier: Instance de CompoundIdentifier
     """
     try:
         print("\n🔬 Analyse des spectres MS2...")
         comparator = MS2Comparator(tolerance_mz=0.01)
-        from tqdm import tqdm
         
         # Initialiser la colonne ms2_similarity_score avec 0
         matches_df['ms2_similarity_score'] = 0.0
         
-        # Garder une copie des niveau 1 existants avant modification
+        # Garder une copie des niveaux 1 existants
         level1_mask = matches_df['confidence_level'] == 1
         level1_indices = matches_df[level1_mask].index
         
-        # Pré-filtrer les matches qui nécessitent une analyse MS2 (exclure niveau 1)
+        # Pré-filtrer les matches à analyser
         matches_to_analyze = matches_df[
-            (~level1_mask) &  # Exclure niveau 1
-            (matches_df['has_ms2_db'] == 1) &  # Uniquement ceux avec MS2 dans la DB
-            matches_df['peaks_mz_ms2'].apply(lambda x: isinstance(x, list) and len(x) > 0)  # Et qui ont des spectres exp
+            (~level1_mask) &
+            (matches_df['has_ms2_db'] == 1) &
+            matches_df['peaks_mz_ms2'].apply(lambda x: isinstance(x, list) and len(x) > 0)
         ]
         
         n_matches_with_ms2 = len(matches_to_analyze)
-        print(f"   ✓ {n_matches_with_ms2}/{len(matches_df)} matches avec MS2 à analyser (spectres exp + DB)")
+        print(f"   ✓ {n_matches_with_ms2}/{len(matches_df)} matches avec MS2 à analyser"
+              " (spectres exp + DB)")
         
         # Créer un cache pour les spectres de référence
         ms2_ref_cache = {}
         
-        # Traiter uniquement les matches sélectionnés
+        # Traiter les matches sélectionnés
         for idx in tqdm(matches_to_analyze.index, desc="Calcul scores MS2"):
             row = matches_df.loc[idx]
             best_score = 0.0
@@ -266,10 +233,10 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
 
         total_candidates = len(matches_df)
         unique_molecules = matches_df['match_name'].nunique()
-        print(f"   ✓ {total_candidates} candidats potentiels ({unique_molecules} molécules uniques)")
+        print(f"   ✓ {total_candidates} candidats potentiels"
+              f" ({unique_molecules} molécules uniques)")
 
     except Exception as e:
+        logger = logging.getLogger(__name__)
         logger.error(f"Erreur lors du calcul des scores MS2: {str(e)}")
         raise
-
-   

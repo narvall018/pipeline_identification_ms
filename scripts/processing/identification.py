@@ -1,114 +1,242 @@
 #scripts/processing/identification.py
 #-*- coding:utf-8 -*-
 
-# Importation des modules
 import logging
 import pandas as pd
+import numpy as np
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Tuple
 from ..config.config import Config
 from ..utils.matching_utils import find_matches_window
 
+class CompoundIdentifier:
+    """
+    Classe pour identifier les composés à partir des données de pics.
+    """
+    def __init__(self) -> None:
+        """Initialise l'identificateur en chargeant la base de données."""
+        self.logger = logging.getLogger(__name__)
+        self.config = Config.IDENTIFICATION
+        self.db: pd.DataFrame = pd.DataFrame()
+        self.load_database()
 
-# Initialiser le logger
-logger = logging.getLogger(__name__)
+    def load_database(self) -> None:
+        """Charge la base de données depuis le fichier HDF5 configuré."""
+        try:
+            # Construction du chemin vers le fichier de base de données
+            db_path = Path(Config.PATHS.INPUT_DATABASES) / self.config.database_file
 
+            # Vérification de l'existence du fichier
+            if not db_path.exists():
+                raise FileNotFoundError(f"Base de données non trouvée: {db_path}")
 
-class CompoundIdentifier(object):
-	"""
-	Classe pour identifier les composés à partir de données de pics en utilisant une base de données.
+            # Chargement de la base de données
+            self.db = pd.read_hdf(db_path, key=self.config.database_key)
 
-	Attributes:
-		db (pd.DataFrame): Base de données des composés chargée en mémoire.
-	"""
-	def __init__(self) -> "CompoundIdentifier":
-		"""
-		Initialise le processus d'identification des composés en chargeant la base de données.
+            # Préparation des colonnes MS2 si présentes
+            if 'peaks_ms2_mz' in self.db.columns and 'peaks_ms2_intensities' in self.db.columns:
+                # Conversion des strings en listes si nécessaire
+                for col in ['peaks_ms2_mz', 'peaks_ms2_intensities']:
+                    self.db[col] = self.db[col].apply(self._convert_peaks_string_to_list)
 
-		Returns:
-			CompoundIdentifier: Un objet de la classe CompoundIdentifier.
-		"""
+            self.logger.info(f"Base de données chargée avec succès : {len(self.db)} composés")
 
-		# Initialise la base de données en tant que DataFrame vide
-		self.db: pd.DataFrame = pd.DataFrame()
+        except Exception as e:
+            self.logger.error(f"Erreur lors du chargement de la base de données : {str(e)}")
+            raise
 
-		# Charge la base de données en appelant la méthode dédiée
-		self.load_database()
+    def _convert_peaks_string_to_list(self, peaks_str: str) -> list:
+        """
+        Convertit une chaîne de pics en liste.
+        
+        Args:
+            peaks_str: Chaîne de caractères représentant les pics
+            
+        Returns:
+            list: Liste des valeurs de pics
+        """
+        try:
+            if pd.isna(peaks_str):
+                return []
+            if isinstance(peaks_str, list):
+                return peaks_str
+            if isinstance(peaks_str, str):
+                # Nettoie et convertit la chaîne en liste
+                peaks_str = peaks_str.strip('[]')
+                if not peaks_str:
+                    return []
+                return [float(x) for x in peaks_str.split(',')]
+            return []
+        except Exception as e:
+            self.logger.warning(f"Erreur de conversion des pics: {str(e)}")
+            return []
 
+    def prepare_database_query(self, peaks_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Prépare la base de données pour la recherche.
+        
+        Args:
+            peaks_df: DataFrame des pics à identifier
+            
+        Returns:
+            pd.DataFrame: Base de données préparée
+        """
+        try:
+            # Vérification des colonnes requises
+            required_columns = set(Config.DB_COLUMNS.values())
+            if not required_columns.issubset(self.db.columns):
+                missing = required_columns - set(self.db.columns)
+                raise ValueError(f"Colonnes manquantes dans la base de données: {missing}")
 
-	def load_database(self) -> None:
-		"""
-		Charge la base de données à partir du fichier HDF5 défini dans la configuration.
+            # Tri de la base de données pour optimiser la recherche
+            return self.db.sort_values('mz')
 
-		Raises:
-			Exception: Si une erreur survient lors du chargement de la base de données.
-		"""
-		try:
-			# Construit le chemin complet vers le fichier de base de données HDF5
-			db_path = Path(Config.INPUT_DATABASES) / Config.IDENTIFICATION['database_file']
+        except Exception as e:
+            self.logger.error(f"Erreur lors de la préparation de la requête : {str(e)}")
+            raise
 
-			# Charge les données HDF5 en utilisant la clé spécifiée dans la configuration
-			self.db = pd.read_hdf(path_or_buf=db_path, key=Config.IDENTIFICATION['database_key'])
+    def identify_compounds(
+        self,
+        peaks_df: pd.DataFrame,
+        output_dir: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        Identifie les composés correspondants pour un ensemble de pics.
+        
+        Args:
+            peaks_df: DataFrame des pics à identifier
+            output_dir: Répertoire de sortie
+            
+        Returns:
+            Optional[pd.DataFrame]: DataFrame des correspondances trouvées
+        """
+        self.logger.info("Début du processus d'identification des composés.")
+        
+        try:
+            # Préparation de la base de données
+            db_query = self.prepare_database_query(peaks_df)
+            
+            # Recherche des correspondances
+            self.logger.info("Recherche des correspondances...")
+            matches_df = find_matches_window(
+                peaks_df=peaks_df,
+                db_df=db_query,
+                tolerances=self.config.tolerances
+            )
 
-			# Ajoute un message dans les logs indiquant le succès du chargement et le nombre de composés
-			logger.info(f"Base de données chargée avec succès : {len(self.db)} composés.")
+            # Vérification des résultats
+            if matches_df.empty:
+                self.logger.warning("Aucune correspondance trouvée.")
+                return None
 
-		except Exception as e:
-			# Log l'erreur rencontrée lors du chargement de la base de données
-			logger.error(f"Erreur lors du chargement de la base de données : {str(e)}")
+            # Création du répertoire de sortie
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
 
-			# Relève une exception pour signaler le problème
-			raise
+            # Sauvegarde des résultats
+            matches_path = output_path / 'all_matches.parquet'
+            matches_df.to_parquet(matches_path)
 
+            # Statistiques d'identification
+            self.logger.info(self._get_identification_stats(matches_df))
+            
+            return matches_df
 
-	def identify_compounds(self, peaks_df: pd.DataFrame, output_dir: str) -> Optional[pd.DataFrame]:
-		"""
-		Identifie les composés correspondants pour un ensemble de pics donnés.
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'identification des composés : {str(e)}")
+            raise
 
-		Args:
-			peaks_df (pd.DataFrame): DataFrame contenant les pics à identifier.
-			output_dir (str): Chemin vers le répertoire où sauvegarder les résultats.
+    def _get_identification_stats(self, matches_df: pd.DataFrame) -> str:
+        """
+        Génère un résumé des statistiques d'identification.
+        
+        Args:
+            matches_df: DataFrame des correspondances
+            
+        Returns:
+            str: Résumé des statistiques
+        """
+        stats = []
+        total_matches = len(matches_df)
+        unique_compounds = matches_df['match_name'].nunique()
+        stats.append(f"Total des correspondances : {total_matches}")
+        stats.append(f"Composés uniques : {unique_compounds}")
+        
+        if 'confidence_level' in matches_df.columns:
+            for level in sorted(matches_df['confidence_level'].unique()):
+                level_count = len(matches_df[matches_df['confidence_level'] == level])
+                level_percent = (level_count / total_matches) * 100
+                stats.append(f"Niveau {level}: {level_count} ({level_percent:.1f}%)")
+        
+        return "\n".join(stats)
 
-		Returns:
-			Optional[pd.DataFrame]: DataFrame contenant les correspondances trouvées, ou `None` si aucun match n'est trouvé.
+    def get_identification_metrics(self, matches_df: pd.DataFrame) -> Dict:
+        """
+        Calcule les métriques d'identification.
+        
+        Args:
+            matches_df: DataFrame des correspondances
+            
+        Returns:
+            Dict: Métriques calculées
+        """
+        try:
+            metrics = {
+                'total_matches': len(matches_df),
+                'unique_compounds': matches_df['match_name'].nunique(),
+                'confidence_levels': {},
+                'mass_error_stats': {},
+                'rt_error_stats': {},
+                'ccs_error_stats': {}
+            }
 
-		Raises:
-			Exception: Si une erreur survient lors de l'identification ou de la sauvegarde des résultats.
-		"""
-		# Ajoute un message d'information dans les logs indiquant le début du processus
-		logger.info("Début du processus d'identification des composés.")
+            # Statistiques par niveau de confiance
+            if 'confidence_level' in matches_df.columns:
+                for level in sorted(matches_df['confidence_level'].unique()):
+                    level_df = matches_df[matches_df['confidence_level'] == level]
+                    metrics['confidence_levels'][f'level_{level}'] = {
+                        'count': len(level_df),
+                        'percent': (len(level_df) / len(matches_df)) * 100,
+                        'unique_compounds': level_df['match_name'].nunique()
+                    }
 
-		try:
-			# Effectue la recherche des correspondances dans la base de données
-			matches_df = find_matches_window(peaks_df=peaks_df, db_df=self.db)
+            # Statistiques d'erreurs
+            if 'mz_error_ppm' in matches_df.columns:
+                metrics['mass_error_stats'] = self._calculate_error_stats(
+                    matches_df['mz_error_ppm']
+                )
+            
+            if 'rt_error_min' in matches_df.columns:
+                metrics['rt_error_stats'] = self._calculate_error_stats(
+                    matches_df['rt_error_min']
+                )
+            
+            if 'ccs_error_percent' in matches_df.columns:
+                metrics['ccs_error_stats'] = self._calculate_error_stats(
+                    matches_df['ccs_error_percent']
+                )
 
-			# Vérifie si des correspondances ont été trouvées
-			if matches_df.empty:
-				# Ajoute un message d'avertissement dans les logs si aucun match n'est trouvé
-				logger.warning("Aucune correspondance trouvée.")
-				return None
+            return metrics
 
-			# Crée le chemin vers le répertoire de sortie
-			output_dir_path = Path(output_dir)
+        except Exception as e:
+            self.logger.error(f"Erreur lors du calcul des métriques : {str(e)}")
+            return {}
 
-			# Crée le répertoire de sortie si celui-ci n'existe pas encore
-			output_dir_path.mkdir(parents=True, exist_ok=True)
-
-			# Définit le chemin du fichier parquet pour sauvegarder les résultats
-			matches_path = output_dir_path / 'all_matches.parquet'
-
-			# Sauvegarde les correspondances trouvées dans un fichier parquet
-			matches_df.to_parquet(path=matches_path)
-
-			# Ajoute un message dans les logs confirmant la sauvegarde des correspondances
-			logger.info(f"Correspondances sauvegardées avec succès dans : {matches_path}")
-
-			# Retourne le DataFrame contenant les correspondances
-			return matches_df
-
-		except Exception as e:
-			# Log l'erreur rencontrée lors du processus d'identification
-			logger.error(f"Erreur lors de l'identification des composés : {str(e)}")
-
-			# Relève une exception pour signaler le problème
-			raise
+    def _calculate_error_stats(self, error_series: pd.Series) -> Dict:
+        """
+        Calcule les statistiques d'erreur.
+        
+        Args:
+            error_series: Série des erreurs
+            
+        Returns:
+            Dict: Statistiques calculées
+        """
+        return {
+            'mean': float(error_series.mean()),
+            'std': float(error_series.std()),
+            'median': float(error_series.median()),
+            'min': float(error_series.min()),
+            'max': float(error_series.max()),
+            'abs_mean': float(error_series.abs().mean())
+        }
