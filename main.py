@@ -1,5 +1,5 @@
 #main.py
-#-*- coding:utf-8 -*-
+#-*- coding:utf-8 -*--
 
 import gc 
 import logging
