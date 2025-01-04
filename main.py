@@ -289,7 +289,7 @@ def process_samples_parallel(
     max_workers: int = None
 ) -> Dict[str, SampleResult]:
     """
-    Traite tous les échantillons en parallèle avec gestion optimisée de la mémoire.
+    Traite tous les échantillons en parallèle avec une gestion optimisée de la mémoire.
     
     Args:
         replicate_groups: Dictionnaire des groupes de réplicats
@@ -303,24 +303,66 @@ def process_samples_parallel(
     """
     if max_workers is None:
         max_workers = min(2, mp.cpu_count())
-    
+
     total_samples = len(replicate_groups)    
     print("\n" + "="*80)
     print(f"TRAITEMENT DES ÉCHANTILLONS ({total_samples} échantillons)")
     print("="*80)
     
-    total_start_time = time.time()
+    # Analyse préliminaire des tailles d'échantillons
+    print("\nAnalyse des tailles d'échantillons...")
+    sample_sizes = {}
+    for base_name, replicates in replicate_groups.items():
+        total_size = 0
+        for rep_file in replicates:
+            file_size = rep_file.stat().st_size
+            # Estimation de la mémoire nécessaire (facteur 3 pour le traitement)
+            memory_needed = file_size * 3
+            total_size += memory_needed
+        sample_sizes[base_name] = total_size
+        print(f"   • {base_name}: {total_size / 1024**2:.1f} MB estimés")
+    
+    # Calcul de la taille de lot basée sur la mémoire disponible
+    available_memory = psutil.virtual_memory().available
+    target_memory_usage = available_memory * 0.7  # Utilise 70% de la RAM disponible
+    
+    # Tri des échantillons par taille
+    sorted_samples = sorted(sample_sizes.items(), key=lambda x: x[1], reverse=True)
+    
+    # Création de lots équilibrés
+    batches = []
+    current_batch = []
+    current_batch_size = 0
+    
+    for sample_name, sample_size in sorted_samples:
+        if current_batch_size + sample_size > target_memory_usage or len(current_batch) >= max_workers:
+            if current_batch:
+                batches.append(current_batch)
+            current_batch = [(sample_name, replicate_groups[sample_name])]
+            current_batch_size = sample_size
+        else:
+            current_batch.append((sample_name, replicate_groups[sample_name]))
+            current_batch_size += sample_size
+    
+    if current_batch:
+        batches.append(current_batch)
+    
+    print(f"\nOptimisation des ressources:")
+    print(f"   • Nombre de lots: {len(batches)}")
+    print(f"   • Workers: {max_workers}")
+    print(f"   • Mémoire disponible: {available_memory / 1024**3:.1f} GB")
+    print(f"   • Utilisation mémoire cible: {target_memory_usage / 1024**3:.1f} GB")
+    
     results = {}
-    
-    batch_size = 2  # Traitement nb échantillons à la fois
-    sample_items = list(replicate_groups.items())
-    
-    # Préparation du suivi de la mémoire
+    total_start_time = time.time()
     process = psutil.Process()
     initial_memory = process.memory_info().rss
     
-    with tqdm(total=len(sample_items), unit="échantillon") as pbar:
-        for i in range(0, len(sample_items), batch_size):
+    with tqdm(total=total_samples, unit="échantillon") as pbar:
+        for batch_idx, batch_items in enumerate(batches, 1):
+            print(f"\nTraitement du lot {batch_idx}/{len(batches)} "
+                  f"({len(batch_items)} échantillons)")
+            
             # Force le garbage collector avant chaque batch
             gc.collect()
             
@@ -332,7 +374,6 @@ def process_samples_parallel(
                 gc.collect()
                 initial_memory = process.memory_info().rss
             
-            batch_items = sample_items[i:i + batch_size]
             process_args = [
                 (base_name, replicates, blank_peaks, calibrator, output_base_dir)
                 for base_name, replicates in batch_items
@@ -354,7 +395,10 @@ def process_samples_parallel(
                             if result.success and hasattr(result, 'peaks_df') and not result.peaks_df.empty:
                                 output_dir = output_base_dir / base_name / "ms1"
                                 output_dir.mkdir(parents=True, exist_ok=True)
-                                result.peaks_df.to_parquet(output_dir / "processed_peaks.parquet")
+                                result.peaks_df.to_parquet(
+                                    output_dir / "processed_peaks.parquet",
+                                    compression='snappy'
+                                )
                                 # Libérer la mémoire du DataFrame
                                 result.peaks_df = None
                                 gc.collect()
@@ -372,7 +416,7 @@ def process_samples_parallel(
                         finally:
                             pbar.update(1)
                             
-                            # Sauvegarde intermédiaire des statistiques après chaque échantillon
+                            # Sauvegarde intermédiaire des statistiques
                             stats_df = pd.DataFrame([{
                                 'Échantillon': r.name,
                                 'Temps (s)': r.processing_time,
@@ -389,7 +433,7 @@ def process_samples_parallel(
                             gc.collect()
                 
             except Exception as e:
-                print(f"\n❌ Erreur dans le batch {i//batch_size + 1}: {str(e)}")
+                print(f"\n❌ Erreur dans le lot {batch_idx}: {str(e)}")
                 for name, _ in batch_items:
                     if name not in results:
                         results[name] = SampleResult(
@@ -400,8 +444,11 @@ def process_samples_parallel(
                         )
                         pbar.update(1)
             
-            # Nettoyage après chaque batch
-            gc.collect()
+            # Pause entre les lots pour libération mémoire
+            if batch_idx < len(batches):
+                #print("\n💤 Pause pour libération mémoire...")
+                time.sleep(2)
+                gc.collect()
     
     total_time = time.time() - total_start_time
     success_count = sum(1 for r in results.values() if r.success)
@@ -447,6 +494,38 @@ def process_samples_parallel(
     print(f"\nStatistiques sauvegardées dans {stats_file}")
     
     return results
+
+def save_intermediate_stats(results: Dict[str, SampleResult], output_dir: Path) -> None:
+    """Sauvegarde les statistiques intermédiaires."""
+    stats_df = pd.DataFrame([{
+        'Échantillon': r.name,
+        'Temps (s)': r.processing_time,
+        'Pics initiaux': r.initial_peaks,
+        'Pics après clustering': r.after_clustering,
+        'Pics après blank': r.after_blank,
+        'Pics finaux': r.final_peaks,
+        'Statut': 'Succès' if r.success else 'Échec'
+    } for r in results.values()])
+    
+    stats_file = output_dir / "processing_statistics.csv"
+    stats_df.to_csv(stats_file, index=False)
+    
+def print_final_stats(results: Dict[str, SampleResult]) -> None:
+    """Affiche les statistiques finales du traitement."""
+    success_count = sum(1 for r in results.values() if r.success)
+    failed_count = len(results) - success_count
+    
+    print("\n" + "="*80)
+    print("STATISTIQUES FINALES")
+    print("="*80)
+    print(f"\n✓ Échantillons traités avec succès: {success_count}")
+    if failed_count > 0:
+        print(f"✗ Échantillons en échec: {failed_count}")
+    
+    # Statistiques sur la mémoire
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    print(f"\nUtilisation mémoire finale: {memory_info.rss / 1024**3:.2f} GB")
 
 def main() -> None:
     """Point d'entrée principal de la pipeline."""
