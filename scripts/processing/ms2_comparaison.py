@@ -1,158 +1,90 @@
-#scripts/processing/ms2_comparaison.py
-#-*- coding:utf-8 -*-
-
 import logging
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Optional
-from scipy.spatial.distance import cosine
-from ..config.config import Config
-from ..utils.matching_utils import assign_confidence_level
+from typing import List, Tuple, Dict
+from scipy.spatial.distance import cdist
+from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
+import multiprocessing as mp
+from ..utils.matching_utils import assign_confidence_level
 
 class MS2Comparator:
-    """Classe pour comparer des spectres MS2 et calculer leurs similarités."""
-    
     def __init__(self, tolerance_mz: float = 0.01):
-        """
-        Initialise le comparateur MS2.
-        
-        Args:
-            tolerance_mz: Tolérance en m/z pour la comparaison des pics (en Da)
-        """
         self.tolerance_mz = tolerance_mz
         self.logger = logging.getLogger(__name__)
+        # Utiliser 75% des cœurs disponibles pour éviter la surcharge
+        self.n_workers = max(1, int(mp.cpu_count() * 0.75))
 
-    def normalize_spectrum(
-        self,
-        mz_list: List[float],
-        intensity_list: List[float]
-    ) -> Tuple[List[float], List[float]]:
-        """
-        Normalise les intensités d'un spectre par rapport au pic le plus intense.
-        
-        Args:
-            mz_list: Liste des m/z
-            intensity_list: Liste des intensités correspondantes
+    def normalize_spectrum(self, mz: np.ndarray, intensity: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Normalisation vectorisée des spectres."""
+        if len(mz) == 0 or len(intensity) == 0:
+            return np.array([]), np.array([])
             
-        Returns:
-            Tuple[List[float], List[float]]: m/z et intensités normalisées
-        """
+        max_intensity = np.max(intensity)
+        if max_intensity == 0:
+            return np.array([]), np.array([])
+            
+        return mz, (intensity / max_intensity) * 1000
+
+    def align_spectra_vectorized(self, exp_mz: np.ndarray, exp_int: np.ndarray, 
+                               ref_mz: np.ndarray, ref_int: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Alignement vectorisé des spectres."""
+        if len(exp_mz) == 0 or len(ref_mz) == 0:
+            return np.array([]), np.array([])
+
+        # Créer une matrice de distance entre tous les m/z
+        distances = np.abs(exp_mz[:, np.newaxis] - ref_mz)
+        matches = distances <= self.tolerance_mz
+
+        # Créer les vecteurs alignés
+        aligned_exp = np.zeros(len(exp_mz) + len(ref_mz))
+        aligned_ref = np.zeros(len(exp_mz) + len(ref_mz))
+
+        # Remplir les intensités correspondantes
+        exp_matches = matches.any(axis=1)
+        aligned_exp[:len(exp_mz)] = np.where(exp_matches, exp_int, 0)
+        
+        ref_matches = matches.any(axis=0)
+        aligned_ref[len(exp_mz):] = np.where(ref_matches, ref_int, 0)
+
+        return aligned_exp, aligned_ref
+
+    def calculate_similarity_batch(self, batch_data: Tuple[pd.Series, Dict]) -> Tuple[int, float]:
+        """Calcule la similarité pour un lot de données."""
+        row, ref_spectra_dict = batch_data
+        
         try:
-            # Vérification des listes vides
-            if not mz_list or not intensity_list:
-                return [], []
-
-            # Normalisation
-            intensity_array = np.array(intensity_list)
-            max_intensity = np.max(intensity_array)
-
-            if max_intensity == 0:
-                return [], []
-
-            normalized_intensities = (intensity_array / max_intensity) * 1000
-
-            return mz_list, normalized_intensities.tolist()
-
-        except Exception as e:
-            self.logger.error(f"Erreur dans la normalisation du spectre : {str(e)}")
-            return [], []
-
-    def align_spectra(
-        self,
-        exp_mz: List[float],
-        exp_int: List[float],
-        ref_mz: List[float],
-        ref_int: List[float]
-    ) -> Tuple[List[float], List[float]]:
-        """
-        Aligne deux spectres en fonction des m/z communs.
-        
-        Args:
-            exp_mz: m/z expérimentaux
-            exp_int: Intensités expérimentales
-            ref_mz: m/z de référence
-            ref_int: Intensités de référence
+            best_score = 0.0
+            exp_mz = np.array(row['peaks_mz_ms2'])
+            exp_int = np.array(row['peaks_intensities_ms2'])
             
-        Returns:
-            Tuple[List[float], List[float]]: Intensités alignées
-        """
-        if not exp_mz or not ref_mz:
-            return [], []
+            if len(exp_mz) == 0 or len(exp_int) == 0:
+                return row.name, 0.0
 
-        aligned_exp_int = []
-        aligned_ref_int = []
-
-        for i, mz_exp in enumerate(exp_mz):
-            matched = False
-            for j, mz_ref in enumerate(ref_mz):
-                if abs(mz_exp - mz_ref) <= self.tolerance_mz:
-                    aligned_exp_int.append(exp_int[i])
-                    aligned_ref_int.append(ref_int[j])
-                    matched = True
-                    break
-            
-            if not matched:
-                aligned_exp_int.append(exp_int[i])
-                aligned_ref_int.append(0)
-
-        for j, mz_ref in enumerate(ref_mz):
-            if all(abs(mz_exp - mz_ref) > self.tolerance_mz for mz_exp in exp_mz):
-                aligned_exp_int.append(0)
-                aligned_ref_int.append(ref_int[j])
-
-        return aligned_exp_int, aligned_ref_int
-
-    def calculate_similarity_score(
-        self,
-        exp_mz: List[float],
-        exp_int: List[float],
-        ref_mz: List[float],
-        ref_int: List[float]
-    ) -> float:
-        """
-        Calcule le score de similarité entre deux spectres.
-        
-        Args:
-            exp_mz: m/z expérimentaux
-            exp_int: Intensités expérimentales
-            ref_mz: m/z de référence
-            ref_int: Intensités de référence
-            
-        Returns:
-            float: Score de similarité (0-1)
-        """
-        try:
-            # Vérification et conversion des données d'entrée
-            exp_mz = exp_mz if isinstance(exp_mz, list) else ([] if pd.isna(exp_mz).any() else exp_mz.tolist())
-            exp_int = exp_int if isinstance(exp_int, list) else ([] if pd.isna(exp_int).any() else exp_int.tolist())
-            ref_mz = ref_mz if isinstance(ref_mz, list) else ([] if pd.isna(ref_mz).any() else ref_mz.tolist())
-            ref_int = ref_int if isinstance(ref_int, list) else ([] if pd.isna(ref_int).any() else ref_int.tolist())
-
-            if not exp_mz or not ref_mz:
-                return 0.0
-
-            # Normalisation
+            # Normaliser le spectre expérimental une seule fois
             exp_mz, exp_int = self.normalize_spectrum(exp_mz, exp_int)
-            ref_mz, ref_int = self.normalize_spectrum(ref_mz, ref_int)
+            
+            # Récupérer les spectres de référence pré-normalisés
+            cache_key = f"{row['match_name']}_{row['match_adduct']}"
+            if cache_key in ref_spectra_dict:
+                for ref_mz, ref_int in ref_spectra_dict[cache_key]:
+                    aligned_exp, aligned_ref = self.align_spectra_vectorized(
+                        exp_mz, exp_int, ref_mz, ref_int
+                    )
+                    if len(aligned_exp) > 0:
+                        # Utiliser cdist pour le calcul vectorisé de la distance cosinus
+                        similarity = 1 - cdist(
+                            aligned_exp.reshape(1, -1),
+                            aligned_ref.reshape(1, -1),
+                            metric='cosine'
+                        )[0, 0]
+                        best_score = max(best_score, similarity)
 
-            if not exp_int or not ref_int:
-                return 0.0
-
-            # Alignement
-            aligned_exp, aligned_ref = self.align_spectra(exp_mz, exp_int, ref_mz, ref_int)
-
-            if not aligned_exp or not aligned_ref:
-                return 0.0
-
-            # Calcul de similarité
-            similarity = 1 - cosine(aligned_exp, aligned_ref)
-            return max(0, similarity)
-
+            return row.name, max(0, best_score)
+            
         except Exception as e:
             self.logger.error(f"Erreur dans le calcul du score de similarité : {str(e)}")
-            return 0.0
-
+            return row.name, 0.0
 
 def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
     """
@@ -166,14 +98,11 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
         print("\n🔬 Analyse des spectres MS2...")
         comparator = MS2Comparator(tolerance_mz=0.01)
         
-        # Initialiser la colonne ms2_similarity_score avec 0
+        # Initialisation
         matches_df['ms2_similarity_score'] = 0.0
-        
-        # Garder une copie des niveaux 1 existants
         level1_mask = matches_df['confidence_level'] == 1
-        level1_indices = matches_df[level1_mask].index
         
-        # Pré-filtrer les matches à analyser
+        # Pré-filtrage
         matches_to_analyze = matches_df[
             (~level1_mask) &
             (matches_df['has_ms2_db'] == 1) &
@@ -181,55 +110,49 @@ def add_ms2_scores(matches_df: pd.DataFrame, identifier: object) -> None:
         ]
         
         n_matches_with_ms2 = len(matches_to_analyze)
-        print(f"   ✓ {n_matches_with_ms2}/{len(matches_df)} matches avec MS2 à analyser"
-              " (spectres exp + DB)")
+        print(f"   ✓ {n_matches_with_ms2}/{len(matches_df)} matches avec MS2 à analyser")
         
-        # Créer un cache pour les spectres de référence
-        ms2_ref_cache = {}
-        
-        # Traiter les matches sélectionnés
-        for idx in tqdm(matches_to_analyze.index, desc="Calcul scores MS2"):
-            row = matches_df.loc[idx]
-            best_score = 0.0
+        # Préparation silencieuse du cache des spectres
+        ref_spectra_dict = {}
+        for name, adduct in matches_to_analyze[['match_name', 'match_adduct']].drop_duplicates().values:
+            ref_spectra = identifier.db[
+                (identifier.db['Name'] == name) & 
+                (identifier.db['adduct'] == adduct)
+            ]
             
-            # Vérifier le cache
-            cache_key = f"{row['match_name']}_{row['match_adduct']}"
-            if cache_key not in ms2_ref_cache:
-                ref_spectra = identifier.db[
-                    (identifier.db['Name'] == row['match_name']) & 
-                    (identifier.db['adduct'] == row['match_adduct'])
-                ]
-                ms2_ref_cache[cache_key] = ref_spectra
-            else:
-                ref_spectra = ms2_ref_cache[cache_key]
-
-            # Comparer avec chaque spectre de référence
+            normalized_spectra = []
             for _, ref_row in ref_spectra.iterrows():
-                if not (
-                    'peaks_ms2_mz' in ref_row and 
-                    'peaks_ms2_intensities' in ref_row and
-                    isinstance(ref_row['peaks_ms2_mz'], (list, np.ndarray)) and
-                    isinstance(ref_row['peaks_ms2_intensities'], (list, np.ndarray))
-                ):
+                if not (isinstance(ref_row['peaks_ms2_mz'], (list, np.ndarray)) and 
+                       isinstance(ref_row['peaks_ms2_intensities'], (list, np.ndarray))):
                     continue
+                    
+                ref_mz = np.array(ref_row['peaks_ms2_mz'])
+                ref_int = np.array(ref_row['peaks_ms2_intensities'])
+                ref_mz, ref_int = comparator.normalize_spectrum(ref_mz, ref_int)
+                if len(ref_mz) > 0:
+                    normalized_spectra.append((ref_mz, ref_int))
+                    
+            if normalized_spectra:
+                ref_spectra_dict[f"{name}_{adduct}"] = normalized_spectra
 
-                score = comparator.calculate_similarity_score(
-                    row['peaks_mz_ms2'],
-                    row['peaks_intensities_ms2'],
-                    ref_row['peaks_ms2_mz'],
-                    ref_row['peaks_ms2_intensities']
-                )
-                best_score = max(best_score, score)
-
-            matches_df.loc[idx, 'ms2_similarity_score'] = best_score
+        # Préparation des lots
+        batch_data = [(row, ref_spectra_dict) for _, row in matches_to_analyze.iterrows()]
+        
+        # Traitement parallèle
+        with ProcessPoolExecutor(max_workers=comparator.n_workers) as executor:
+            futures = [executor.submit(comparator.calculate_similarity_batch, data) 
+                      for data in batch_data]
+            
+            for future in tqdm(futures, total=len(batch_data), desc="Calcul scores MS2"):
+                idx, score = future.result()
+                matches_df.loc[idx, 'ms2_similarity_score'] = score
 
         # Recalcul des niveaux de confiance
         print("\n📊 Calcul des niveaux de confiance...")
         for idx in tqdm(matches_df.index, desc="Attribution niveaux"):
-            if not level1_mask[idx]:  # Ne pas recalculer pour le niveau 1
-                confidence_level, reason = assign_confidence_level(matches_df.loc[idx])
-                matches_df.loc[idx, 'confidence_level'] = confidence_level
-                matches_df.loc[idx, 'confidence_reason'] = reason
+            if not level1_mask[idx]:
+                confidence_level, confidence_reason = assign_confidence_level(matches_df.loc[idx])
+                matches_df.loc[idx, ['confidence_level', 'confidence_reason']] = [confidence_level, confidence_reason] 
 
         total_candidates = len(matches_df)
         unique_molecules = matches_df['match_name'].nunique()
