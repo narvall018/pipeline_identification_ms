@@ -14,6 +14,7 @@ import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt 
 from typing import Dict, Union, List
+import psutil
 
 
 # Configuration
@@ -286,7 +287,19 @@ def process_samples_parallel(
     output_base_dir: Path,
     max_workers: int = None
 ) -> Dict[str, SampleResult]:
-    """Traite tous les échantillons en parallèle avec gestion de la mémoire."""
+    """
+    Traite tous les échantillons en parallèle avec gestion optimisée de la mémoire.
+    
+    Args:
+        replicate_groups: Dictionnaire des groupes de réplicats
+        blank_peaks: DataFrame des pics du blank
+        calibrator: Instance du calibrateur CCS
+        output_base_dir: Répertoire de sortie
+        max_workers: Nombre maximum de workers
+        
+    Returns:
+        Dict[str, SampleResult]: Résultats par échantillon
+    """
     if max_workers is None:
         max_workers = min(2, mp.cpu_count())
     
@@ -298,14 +311,28 @@ def process_samples_parallel(
     total_start_time = time.time()
     results = {}
     
-    # Traiter les échantillons par petits groupes
-    batch_size = 2  # Réduit à 2 échantillons à la fois
+    # Réduire la taille du batch pour moins de consommation mémoire
+    batch_size = 1  # Traitement d'un échantillon à la fois
     sample_items = list(replicate_groups.items())
+    
+    # Préparation du suivi de la mémoire
+    process = psutil.Process()
+    initial_memory = process.memory_info().rss
     
     with tqdm(total=len(sample_items), unit="échantillon") as pbar:
         for i in range(0, len(sample_items), batch_size):
-            batch_items = sample_items[i:i + batch_size]
+            # Force le garbage collector avant chaque batch
+            gc.collect()
             
+            # Surveillance de la mémoire
+            current_memory = process.memory_info().rss
+            memory_increase = current_memory - initial_memory
+            if memory_increase > 1e9:  # Si augmentation > 1GB
+                print("\n⚠️ Forte utilisation mémoire détectée, nettoyage forcé...")
+                gc.collect()
+                initial_memory = process.memory_info().rss
+            
+            batch_items = sample_items[i:i + batch_size]
             process_args = [
                 (base_name, replicates, blank_peaks, calibrator, output_base_dir)
                 for base_name, replicates in batch_items
@@ -322,10 +349,20 @@ def process_samples_parallel(
                         base_name = future_to_name[future]
                         try:
                             _, result = future.result()
+                            
+                            # Sauvegarde immédiate des résultats sur disque si possible
+                            if result.success and hasattr(result, 'peaks_df') and not result.peaks_df.empty:
+                                output_dir = output_base_dir / base_name / "ms1"
+                                output_dir.mkdir(parents=True, exist_ok=True)
+                                result.peaks_df.to_parquet(output_dir / "processed_peaks.parquet")
+                                # Libérer la mémoire du DataFrame
+                                result.peaks_df = None
+                                gc.collect()
+                            
                             results[base_name] = result
+                            
                         except Exception as e:
                             print(f"\n❌ Erreur pour {base_name}: {str(e)}")
-                            # Créer un SampleResult vide pour les échantillons en erreur
                             results[base_name] = SampleResult(
                                 base_name, 
                                 pd.DataFrame(), 
@@ -334,10 +371,25 @@ def process_samples_parallel(
                             )
                         finally:
                             pbar.update(1)
+                            
+                            # Sauvegarde intermédiaire des statistiques après chaque échantillon
+                            stats_df = pd.DataFrame([{
+                                'Échantillon': r.name,
+                                'Temps (s)': r.processing_time,
+                                'Pics initiaux': r.initial_peaks,
+                                'Pics après clustering': r.after_clustering,
+                                'Pics après blank': r.after_blank,
+                                'Pics finaux': r.final_peaks,
+                                'Statut': 'Succès' if r.success else 'Échec'
+                            } for r in results.values()])
+                            
+                            stats_file = output_base_dir / "processing_statistics.csv"
+                            stats_df.to_csv(stats_file, index=False)
+                            del stats_df
+                            gc.collect()
                 
             except Exception as e:
                 print(f"\n❌ Erreur dans le batch {i//batch_size + 1}: {str(e)}")
-                # Gérer les échantillons non traités dans ce batch
                 for name, _ in batch_items:
                     if name not in results:
                         results[name] = SampleResult(
@@ -348,33 +400,20 @@ def process_samples_parallel(
                         )
                         pbar.update(1)
             
-            # Force la libération de la mémoire
+            # Nettoyage après chaque batch
             gc.collect()
-            
-            # Sauvegarde intermédiaire des statistiques
-            stats_df = pd.DataFrame([{
-                'Échantillon': r.name,
-                'Temps (s)': r.processing_time,
-                'Pics initiaux': r.initial_peaks,
-                'Pics après clustering': r.after_clustering,
-                'Pics après blank': r.after_blank,
-                'Pics finaux': r.final_peaks,
-                'Statut': 'Succès' if r.success else 'Échec'
-            } for r in results.values()])
-            
-            stats_file = output_base_dir / "processing_statistics.csv"
-            stats_df.to_csv(stats_file, index=False)
     
     total_time = time.time() - total_start_time
     success_count = sum(1 for r in results.values() if r.success)
     failed_count = len(results) - success_count
     
+    # Affichage du récapitulatif
     print("\n" + "="*80)
     print("RÉCAPITULATIF")
     print("="*80)
-    
     print(f"\nTemps total: {total_time:.2f} secondes")
     print(f"Échantillons traités: {success_count}/{len(results)}")
+    
     if failed_count > 0:
         print(f"❌ Échantillons en échec: {failed_count}")
     
@@ -388,15 +427,10 @@ def process_samples_parallel(
             print(f"  • Pics après clustering: {result.after_clustering}")
             print(f"  • Pics après blank: {result.after_blank}")
             print(f"  • Pics finaux: {result.final_peaks}")
-            peaks_df = result.peaks_df
-            if not peaks_df.empty and 'CCS' in peaks_df.columns:
-                ccs_stats = peaks_df['CCS'].agg(['min', 'max', 'mean'])
-                print(f"  • CCS min-max: {ccs_stats['min']:.2f} - {ccs_stats['max']:.2f} Å²")
-                print(f"  • CCS moyenne: {ccs_stats['mean']:.2f} Å²")
         else:
             print(f"  • Erreur: {result.logs}")
     
-    # Sauvegarde finale des statistiques
+    # Dernière sauvegarde des statistiques
     final_stats_df = pd.DataFrame([{
         'Échantillon': r.name,
         'Temps (s)': r.processing_time,
@@ -409,6 +443,7 @@ def process_samples_parallel(
     
     stats_file = output_base_dir / "processing_statistics.csv"
     final_stats_df.to_csv(stats_file, index=False)
+    
     print(f"\nStatistiques sauvegardées dans {stats_file}")
     
     return results
