@@ -1,9 +1,6 @@
 #scripts/processing/feature_matrix.py
 # -*- coding:utf-8 -*-
 
-#scripts/processing/feature_matrix.py
-#-*- coding:utf-8 -*-
-
 import logging
 import numpy as np
 import pandas as pd
