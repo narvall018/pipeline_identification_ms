@@ -280,6 +280,7 @@ def generate_visualizations(output_dir: Path) -> None:
     except Exception as e:
         print(f"❌ Erreur lors de la création des visualisations: {str(e)}")
         raise
+
 def process_samples_parallel(
     replicate_groups: Dict[str, List[Path]],
     blank_peaks: pd.DataFrame,
@@ -311,8 +312,7 @@ def process_samples_parallel(
     total_start_time = time.time()
     results = {}
     
-    # Réduire la taille du batch pour moins de consommation mémoire
-    batch_size = 1  # Traitement d'un échantillon à la fois
+    batch_size = 2  # Traitement nb échantillons à la fois
     sample_items = list(replicate_groups.items())
     
     # Préparation du suivi de la mémoire
