@@ -46,7 +46,7 @@ class IntraClusteringConfig:
     rt_tolerance: float = 0.1
     dbscan_eps: float = 1.0
     dbscan_min_samples: int = 1
-    algorithm: str = 'ball_tree'
+    algorithm: str = 'kd_tree'
 
 @dataclass
 class FeatureAlignmentConfig:
@@ -56,7 +56,7 @@ class FeatureAlignmentConfig:
     rt_tolerance: float = 0.2
     dbscan_eps: float = 1.0
     dbscan_min_samples: int = 1
-    algorithm: str = 'ball_tree'
+    algorithm: str = 'kd_tree'
 
 @dataclass
 class BlankSubtractionConfig:
@@ -77,7 +77,7 @@ class BlankReplicateConfig:
     rt_tolerance: float = 0.1   
     dbscan_eps: float = 0.6
     dbscan_min_samples: int = 2
-    algorithm: str = 'ball_tree'
+    algorithm: str = 'kd_tree'
 
 @dataclass
 class ReplicateConfig:
@@ -88,7 +88,7 @@ class ReplicateConfig:
     rt_tolerance: float = 0.1
     dbscan_eps: float = 0.6
     dbscan_min_samples: int = 2
-    algorithm: str = 'ball_tree'
+    algorithm: str = 'kd_tree'
 
 @dataclass
 class IdentificationConfig:
