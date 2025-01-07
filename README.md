@@ -1055,7 +1055,7 @@ Pour citer ce projet dans une publication académique, veuillez utiliser :
     title = {Pipeline d'Identification MS},
     year = {2024},
     author = {Sade, Julien},
-    url = {https://github.com/pipeline_identification_ms},
+    url = {https://github.com/narvall018/pipeline_identification_ms},
     version = {1.0.0},
     institution = {Leesu},
     note = {Pipeline pour l'identification de composés par spectrométrie de masse}
@@ -1063,11 +1063,11 @@ Pour citer ce projet dans une publication académique, veuillez utiliser :
 ```
 
 Pour une citation dans le texte :
-> Sade, J. (2024). Pipeline d'Identification MS,https://github.com/pipeline_identification_ms
+> Sade, J. (2024). Pipeline d'Identification MS,https://github.com/narvall018/pipeline_identification_ms
 
 **Contact**
 
 Pour toute question concernant l'utilisation ou la licence :
 - ✉️ julien.sade@u-pec.fr
-- 🌐 GitHub Issues : https://github.com/pipeline_identification_ms/issues
+- 🌐 GitHub Issues : https://github.com/pipeline_identification_ms/narvall018/issues
 
