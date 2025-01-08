@@ -8,8 +8,6 @@ La piepline travaille sur trois dimensions analytiques :
 - Le temps de rétention (RT)  
 - Le temps de dérive (DT)
 
-### 1.2. Architecture
-
 La pipeline est structurée en modules interconnectés, chacun responsable d'une étape spécifique du traitement des données.
 
 **Flux de Données**
@@ -788,4 +786,3 @@ Pour une citation dans le texte :
 
 Pour toute question concernant l'utilisation :
 - ✉️ julien.sade@u-pec.fr
-- 🌐 GitHub Issues : https://github.com/pipeline_identification_ms/narvall018/issues
