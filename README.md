@@ -14,7 +14,6 @@ La pipeline est structurée en modules interconnectés, chacun responsable d'une
 
 **Flux de Données**
 
-Les données traversent la pipeline selon la séquence suivante :
 1. Détection des pics MS1 dans les données brutes
 2. Traitement des réplicats pour valider les pics détectés
 3. Soustraction des blancs pour éliminer les contaminations
@@ -23,8 +22,6 @@ Les données traversent la pipeline selon la séquence suivante :
 6. Identification des composés et validation MS2
 
 **Composants Principaux**
-
-La pipeline s'appuie sur sept modules :
 
 - **PeakDetector** : détection des pics dans les données brutes
 - **ReplicateProcessor** : gestion et validation des réplicats
@@ -94,66 +91,7 @@ data/
 **Configuration Système**
 - Python 3.8 ou supérieur
 - 8 Go RAM minimum recommandé
-- Espace disque : 1 Go minimum pour l'installation# Pipeline d'Identification MS
-
-## 2. Installation ⚙️
-
-### 2.1. Via Conda (Recommandé)
-```bash
-# Cloner le repository
-git clone https://github.com/votre_username/pipeline_identification_ms.git
-cd pipeline_identification_ms
-
-# Créer et activer l'environnement
-conda env create -f environment.yml
-conda activate ms_pipeline
-
-# Vérifier l'installation
-python -c "import deimos; print(deimos.__version__)"
-```
-
-En cas d'erreur avec DEIMoS :
-```bash
-conda activate ms_pipeline
-pip uninstall deimos
-pip install git+https://github.com/pnnl/deimos.git
-```
-
-### 2.2. Via Pip
-```bash
-# Créer un environnement virtuel
-python -m venv ms_env
-
-# Activer l'environnement
-# Sur Windows :
-ms_env\Scripts\activate
-# Sur Linux/macOS :
-source ms_env/bin/activate
-
-# Installer les dépendances
-pip install -r requirements.txt
-```
-
-### 2.3. Prérequis
-
-**Fichiers Requis**
-- 📥 Base de données NORMAN ([Télécharger ici](https://drive.google.com/file/d/1mZa1r9RZ4Ioy1cILJqIteAz3vUs_UIaU/view))
-- 🗂️ Fichiers blancs dans `data/input/blanks/`
-
-**Structure à Créer**
-```
-data/
-├── input/
-│   ├── samples/          # Vos fichiers .parquet
-│   ├── blanks/          # Vos fichiers blancs
-│   ├── calibration/     # Fichiers de calibration
-│   └── databases/       # Base NORMAN
-```
-
-**Configuration Système**
-- Python 3.8 ou supérieur
-- 8 Go RAM minimum recommandé
-
+  
 
 ## 3. Structure et Configuration 📁
 
@@ -203,7 +141,7 @@ pipeline_identification_ms/
 **Description des Dossiers**
 
 - `data/input/` : Contient toutes les données d'entrée nécessaires
-  - `samples/` : Vos fichiers d'échantillons au format .parquet
+  - `samples/` : Fichiers d'échantillons au format .parquet
   - `blanks/` : Fichiers de blancs analytiques
   - `calibration/` : Données pour la calibration CCS
   - `databases/` : Base de données de référence
@@ -231,12 +169,13 @@ pipeline_identification_ms/
 
 ### 3.2. Configuration
 
-La configuration de la pipeline est gérée par des classes dédiées dans `config.py`. Chaque aspect du traitement a sa propre configuration avec des paramètres par défaut optimisés.
+La configuration de la pipeline est gérée par des classes dédiées dans `config.py`. Chaque aspect du traitement a sa propre configuration avec des paramètres par défaut modifiables.
 
 **Paramètres Globaux**
 - Organisation en classes de configuration
 - Gestion des chemins automatisée
 - Configuration du traitement parallèle
+- Paramètres clustering
 
 **Tolérances d'Identification**
 - Paramètres MS1 et MS2
@@ -305,10 +244,6 @@ class Config:
     )
 ```
 
-**Personnalisation des Paramètres**
-- Chaque module a ses paramètres par défaut
-- Les valeurs peuvent être ajustées selon vos besoins
-
 **Modules Configurables**
 - PeakDetection : détection des pics MS1
 - Identification : paramètres d'identification
@@ -316,7 +251,6 @@ class Config:
 - Replicate : gestion des réplicats
 - MS2Extraction : extraction des spectres MS2
 - Alignement : Alignement des échantillons
-
 
 
 ## 4. Composants Principaux 🔧
@@ -343,7 +277,7 @@ peaks = detector.detect_peaks(
 )
 ```
 
-**Paramètres Clés**
+**Paramètres**
 ```python
 # Configuration par défaut
 PEAK_DETECTION = {
@@ -377,11 +311,6 @@ PEAK_DETECTION = {
    ```python
    clustered_peaks = detector.cluster_peaks(peaks)
    ```
-
-**Optimisations Possibles**
-- Ajustement du seuil selon le bruit de fond
-- Modification des rayons selon la résolution de l'instrument
-- Paramétrage du clustering selon la complexité de l'échantillon
 
 **Format des Données de Sortie**
 ```python
@@ -456,13 +385,6 @@ results = {
 }
 ```
 
-**Rapport de Traitement**
-- Nombre de pics par réplicat
-- Pics communs détectés
-- Statistiques de regroupement
-
-
-
 ### 4.3. Soustraction des Blancs (BlankProcessor)
 
 Le BlankProcessor élimine les contaminations et le bruit de fond en soustrayant les pics détectés dans les blancs analytiques.
@@ -502,23 +424,6 @@ BLANK_SUBTRACTION = {
     'dbscan_eps': 1.5,         # Epsilon clustering
     'dbscan_min_samples': 2,   # Minimum échantillons
 }
-```
-
-**Paramètres Importants**
-- `mz_ppm`: Tolérance pour la comparaison des masses
-- `dt_tolerance`: Fenêtre de temps de dérive
-- `rt_tolerance`: Fenêtre de temps de rétention
-- `cluster_ratio`: Proportion minimum dans les blancs
-
-**Validation des Résultats**
-- Vérification du nombre de pics supprimés
-- Analyse des intensités relatives
-- Contrôle des pics conservés
-```python
-# Exemple de validation
-print(f"Pics initiaux : {len(sample_peaks)}")
-print(f"Pics après soustraction : {len(clean_peaks)}")
-print(f"Pourcentage de suppression : {((len(sample_peaks) - len(clean_peaks)) / len(sample_peaks)) * 100:.1f}%")
 ```
 
 **Format des Données de Sortie**
@@ -590,19 +495,6 @@ feature_df = {
 }
 ```
 
-**Optimisation Mémoire**
-- Traitement par lots des échantillons
-- Nettoyage des données temporaires
-- Gestion efficace des grands ensembles
-```python
-# Exemple d'optimisation
-matrix = processor.create_feature_matrix(
-    input_dir=input_dir,
-    output_dir=output_dir,
-    batch_size=100             # Traitement par lots
-)
-```
-
 **Sorties Générées**
 ```
 data/output/
@@ -612,13 +504,6 @@ data/output/
 └── features_complete.csv
 ```
 
-**Validation des Résultats**
-```python
-# Statistiques de base
-print(f"Nombre de features : {matrix.shape[1]}")
-print(f"Nombre d'échantillons : {matrix.shape[0]}")
-print(f"Taux de remplissage : {(matrix > 0).mean().mean() * 100:.1f}%")
-```
 
 ### 4.5. Calibration CCS (CCSCalibrator)
 
@@ -650,16 +535,6 @@ calibration_data = {
     'z': []                # État de charge
 }
 ```
-
-2. Validation
-- Vérification de la corrélation
-- Analyse des résidus
-- Contrôle de la gamme de calibration
-
-**Standards Recommandés**
-- Agilent Tune Mix
-- Waters Major Mix
-- Composés de référence avec CCS connues
 
 ### 4.6. Identification (CompoundIdentifier)
 
@@ -738,43 +613,7 @@ MS2_EXTRACTION = {
 }
 ```
 
-**Processus d'Extraction**
-1. Sélection de la fenêtre RT/DT
-```python
-# Définition des fenêtres
-rt_window = (rt - rt_tolerance, rt + rt_tolerance)
-dt_window = (dt - dt_tolerance, dt + dt_tolerance)
-```
-
-2. Traitement du Spectre
-```python
-# Format du spectre
-spectrum = {
-    'mz_rounded': [],          # m/z arrondis
-    'intensity_normalized': [] # Intensités normalisées
-}
-```
-
-**Comparaison des Spectres**
-- Alignement des pics
-- Normalisation des intensités
-- Calcul des scores de similarité
-
-**Format des Résultats**
-```python
-# Structure des données de sortie
-ms2_results = {
-    'peaks_mz_ms2': [],        # Liste des m/z
-    'peaks_intensities_ms2': [],# Intensités correspondantes
-    'ms2_similarity_score': [], # Score de similarité
-    'confidence_level': []      # Niveau de confiance mis à jour
-}
-```
-
-
 ## 5. Utilisation 📊
-
-### 5.1. Pipeline Complète
 
 Pour utiliser la pipeline, il suffit de suivre ces étapes :
 
@@ -840,107 +679,6 @@ Les résultats sont automatiquement sauvegardés dans `data/output/` :
 - `features_complete.csv` : Version CSV des identifications
 
 
-### 5.2. Utilisation Modulaire
-
-La pipeline peut être utilisée de manière modulaire pour répondre à différents besoins spécifiques.
-
-**1. Analyse d'un Seul Échantillon**
-```python
-from scripts.processing.peak_detection import PeakDetector
-from scripts.processing.ccs_calibration import CCSCalibrator
-
-# Détection des pics uniquement
-detector = PeakDetector()
-peaks = detector.process_sample(data)
-
-# Avec calcul des CCS
-calibrator = CCSCalibrator("calibration.csv")
-peaks_with_ccs = calibrator.calculate_ccs(peaks)
-```
-
-**2. Traitement de Réplicats sans Blancs**
-```python
-from scripts.processing.replicate_processing import ReplicateProcessor
-
-processor = ReplicateProcessor()
-
-# Définir les fichiers réplicats
-replicate_files = [
-    "sample_replicate_1.parquet",
-    "sample_replicate_2.parquet",
-    "sample_replicate_3.parquet"
-]
-
-# Traitement des réplicats uniquement
-results = processor.process_sample_with_replicates(
-    sample_name="mon_echantillon",
-    replicate_files=replicate_files,
-    output_dir="output"
-)
-```
-
-**3. Identification Ciblée**
-```python
-from scripts.processing.identification import CompoundIdentifier
-
-identifier = CompoundIdentifier()
-
-# Identification avec paramètres personnalisés
-matches = identifier.identify_compounds(
-    peaks_df=peaks,
-    output_dir="output",
-    mz_tolerance=3,  # ppm
-    rt_tolerance=0.5 # min
-)
-
-# Filtrer par niveau de confiance
-high_confidence = matches[matches['confidence_level'] <= 2]
-```
-
-**4. Analyse MS2 Spécifique**
-```python
-from scripts.processing.ms2_extraction import MS2Extractor
-
-extractor = MS2Extractor()
-
-# Extraction pour des coordonnées spécifiques
-spectrum = extractor.extract_ms2_spectrum(
-    ms2_data=data,
-    rt=4.5,    # temps de rétention cible
-    dt=35.2    # temps de dérive cible
-)
-```
-
-**5. Création de Matrices Personnalisées**
-```python
-from scripts.processing.feature_matrix import FeatureProcessor
-
-processor = FeatureProcessor()
-
-# Création d'une matrice pour un sous-ensemble
-matrix, features = processor.align_features_across_samples(
-    samples_dir="samples_subset",
-    min_samples=2,        # présent dans au moins 2 échantillons
-    intensity_threshold=500
-)
-```
-
-**6. Workflow pour Étude de Répétabilité**
-```python
-# Analyse de la variabilité entre réplicats
-replicates = processor.process_replicates(replicate_files)
-stats = {
-    'rsd_mz': [],      # RSD des masses
-    'rsd_rt': [],      # RSD des temps de rétention
-    'rsd_intensity': [] # RSD des intensités
-}
-
-for peak_group in replicates.groupby('cluster'):
-    stats['rsd_mz'].append(peak_group['mz'].std() / peak_group['mz'].mean() * 100)
-    # etc...
-```
-
-
 ## 6. Résultats et Visualisation 📈
 
 ### 6.1. Formats de Sortie
@@ -994,8 +732,7 @@ Colonnes principales :
 **Formats Disponibles**
 - `.parquet` : Format optimisé pour l'analyse ultérieure
 - `.csv` : Format lisible et compatible avec Excel
-- Tous les fichiers incluent des en-têtes explicites
-- Les valeurs manquantes sont représentées par 0 ou NA selon le contexte
+
 
 **Accès aux Résultats**
 ```python
@@ -1018,7 +755,7 @@ La matrice de features (`feature_matrix.csv/parquet`) contient :
   - XXX : numéro unique de la feature
   - YYY.YYYY : masse exacte mesurée
 
-Dans `features_complete.csv/parquet`, vous trouverez :
+Dans `features_complete.csv/parquet` :
 - Toutes les features identifiées
 - Paramètres analytiques (m/z, RT, DT, CCS)
 - Informations d'identification (nom, formule, score)
@@ -1026,27 +763,9 @@ Dans `features_complete.csv/parquet`, vous trouverez :
 
 ## 7. Licence ⚖️
 
-### 7.1. Informations de Licence
+Ce projet est sous licence [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
 
-Ce projet est sous licence [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/).
-
-**Droits Accordés**
-- ✅ Partager : copier et redistribuer le matériel sous n'importe quel format
-- ✅ Adapter : remixer, transformer et créer à partir du matériel
-- ✅ Le titulaire des droits ne peut pas révoquer ces droits tant que vous suivez les termes de la licence
-
-### 7.2. Conditions d'Utilisation
-
-**À Faire**
-- Crédit : Vous devez donner le crédit approprié, fournir un lien vers la licence et indiquer si des modifications ont été apportées
-- Usage Non Commercial : Vous ne pouvez pas utiliser le matériel à des fins commerciales
-- Même Licence : Si vous remixez, transformez ou créez à partir du matériel, vous devez distribuer vos contributions sous la même licence
-
-**Restrictions**
-- ❌ Usage Commercial : Cette licence interdit expressément l'utilisation commerciale
-- ❌ Garanties : Pas de garanties fournies avec la licence
-
-### 7.3. Citation
+### 8. Citation
 
 Pour citer ce projet dans une publication académique, veuillez utiliser :
 
@@ -1067,7 +786,6 @@ Pour une citation dans le texte :
 
 **Contact**
 
-Pour toute question concernant l'utilisation ou la licence :
+Pour toute question concernant l'utilisation :
 - ✉️ julien.sade@u-pec.fr
 - 🌐 GitHub Issues : https://github.com/pipeline_identification_ms/narvall018/issues
-
