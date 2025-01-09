@@ -1,5 +1,19 @@
 # 🔬 Pipeline d'Identification MS
 
+
+## Table des matières
+
+1. [Introduction](#1-introduction)
+2. [Installation](#2-installation)
+3. [Structure et Configuration](#3-structure-et-configuration)
+4. [Composants Principaux](#4-composants-principaux)
+5. [Utilisation](#5-utilisation)
+6. [Résultats et Visualisation](#6-résultats-et-visualisation)
+7. [Licence](#7-licence)
+8. [Citation](#8-citation)
+
+
+
 ## 1. Introduction 🚀
 
 Pipeline d'identification de composés intégrant MS1, mobilité ionique (CCS) et MS2, avec filtration par réplicats, soustraction des blancs, et alignement des échantillons.
@@ -787,3 +801,4 @@ Pour une citation dans le texte :
 
 Pour toute question concernant l'utilisation :
 - ✉️ julien.sade@u-pec.fr
+
