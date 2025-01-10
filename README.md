@@ -16,7 +16,7 @@
 
 Pipeline d'identification de composés intégrant MS1, mobilité ionique (CCS) et MS2, avec filtration par réplicats, soustraction des blancs, et alignement des échantillons.
 
-La piepline travaille sur trois dimensions analytiques :
+La pipepline travaille sur trois dimensions analytiques :
 - La masse exacte (m/z)
 - Le temps de rétention (RT)  
 - Le temps de dérive (DT)
