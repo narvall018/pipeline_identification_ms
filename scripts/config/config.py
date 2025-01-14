@@ -41,7 +41,7 @@ class PeakDetectionConfig:
 @dataclass
 class IntraClusteringConfig:
     """Configuration pour le clustering au sein d'un même échantillon"""
-    mz_ppm: float = 10
+    mz_ppm: float = 5
     dt_tolerance: float = 1.0
     rt_tolerance: float = 0.1
     dbscan_eps: float = 1.0
@@ -52,16 +52,16 @@ class IntraClusteringConfig:
 class FeatureAlignmentConfig:
     """Configuration pour l'alignement des features entre échantillons"""
     mz_ppm: float = 10
-    dt_tolerance: float = 1.02
-    rt_tolerance: float = 0.2
-    dbscan_eps: float = 1.0
+    dt_tolerance: float = 0.5 #0.5
+    rt_tolerance: float = 0.2 #0.1 à 0.2
+    dbscan_eps: float = 1 # 1
     dbscan_min_samples: int = 1
     algorithm: str = 'kd_tree'
 
 @dataclass
 class BlankSubtractionConfig:
     """Configuration pour la soustraction du blank"""
-    mz_ppm: float = 10
+    mz_ppm: float = 5
     dt_tolerance: float = 0.22
     rt_tolerance: float = 0.1
     dbscan_eps: float = 1.5
@@ -72,7 +72,7 @@ class BlankSubtractionConfig:
 @dataclass
 class BlankReplicateConfig:
     """Configuration pour le clustering des réplicats de blanks"""
-    mz_ppm: float = 10
+    mz_ppm: float = 5
     dt_tolerance: float = 0.22  
     rt_tolerance: float = 0.1   
     dbscan_eps: float = 0.6
@@ -83,7 +83,7 @@ class BlankReplicateConfig:
 class ReplicateConfig:
     """Configuration pour le traitement des réplicats"""
     min_replicates: int = 2  
-    mz_ppm: float = 10
+    mz_ppm: float = 5
     dt_tolerance: float = 0.22
     rt_tolerance: float = 0.1
     dbscan_eps: float = 0.6
