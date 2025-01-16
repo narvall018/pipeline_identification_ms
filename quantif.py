@@ -36,7 +36,7 @@ def main() -> None:
     compounds_dir = Path("data/input/calibrants/compounds")
     calibration_dir = Path("data/input/calibrants/samples")
     output_dir = Path("output/quantification")
-    input_dir = Path("output")
+    input_dir = Path("data/output")
     
     print("\n" + "="*80)
     print("QUANTIFICATION DES ÉCHANTILLONS")
