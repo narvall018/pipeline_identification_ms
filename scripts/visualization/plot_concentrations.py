@@ -46,6 +46,7 @@ def plot_top_concentrations(quant_dir: Path, output_dir: Path, n_compounds: int 
             
             # Lire et préparer les données
             df = pd.read_csv(file)
+            df["conc"] = df['conc'] * 1e6
             top_compounds = df.nlargest(n_compounds, 'conc')
             
             # Créer le plot
