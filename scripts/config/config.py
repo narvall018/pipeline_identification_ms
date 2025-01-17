@@ -98,7 +98,7 @@ class IdentificationConfig:
     tolerances: Dict[str, float] = field(default_factory=lambda: {
         'mz_ppm': 5,
         'ccs_percent': 8,
-        'rt_min': 0.3
+        'rt_min': 0.1
     })
     weights: Dict[str, float] = field(default_factory=lambda: {
         'mz': 0.4,
