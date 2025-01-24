@@ -1,126 +1,8 @@
-# scripts/quantification/compound_recovery.py
-
-# import pandas as pd
-# from pathlib import Path
-# from typing import List, Optional
-
-# def load_target_compounds(compounds_file: Path) -> List[str]:
-#     """Charge la liste des composés cibles pour les calibrants."""
-#     df = pd.read_csv(compounds_file)
-#     return df['Compound'].tolist()
-
-# def load_calibration_samples(calibration_file: Path) -> pd.DataFrame:
-#     """Charge les données des échantillons de calibration."""
-#     df = pd.read_csv(calibration_file)
-#     concentrations = pd.DataFrame({
-#         'Sample': df['Name'],
-#         'conc_M': df['conc_M']
-#     })
-#     return concentrations
-
-# def process_all_data(
-#     features_df: pd.DataFrame,
-#     feature_matrix_df: pd.DataFrame,
-#     calibration_df: pd.DataFrame
-# ) -> pd.DataFrame:
-#     """Traite les données pour tous les échantillons en gardant l'intensité maximale."""
-#     results = []
-    
-#     # On traite tous les composés de niveau 1
-#     level1_matches = features_df[features_df['confidence_level'] == 1].copy()
-    
-#     for _, match_row in level1_matches.iterrows():
-#         compound = match_row['match_name']
-#         feature_id = f"{match_row['feature_id']}_mz{match_row['mz']:.4f}"
-#         samples = match_row['samples'].split(',')
-        
-#         for sample in samples:
-#             sample = sample.strip()
-            
-#             # On vérifie si c'est un échantillon de calibration
-#             is_calibration = sample in calibration_df['Sample'].values
-            
-#             # Pour les composés dans les échantillons de calibration, on récupère la concentration
-#             conc_val = None
-#             if is_calibration:
-#                 conc_val = calibration_df.loc[calibration_df['Sample'] == sample, 'conc_M'].iloc[0]
-            
-#             intensity = feature_matrix_df.loc[sample, feature_id] if sample in feature_matrix_df.index and feature_id in feature_matrix_df.columns else None
-            
-#             results.append({
-#                 'Compound': compound,
-#                 'SMILES': match_row['match_smiles'],
-#                 'Feature_ID': feature_id,
-#                 'Adduct': match_row['match_adduct'],
-#                 'RT': match_row['retention_time'],
-#                 'DT': match_row['drift_time'],
-#                 'CCS': match_row['CCS'],
-#                 'Sample': sample,
-#                 'Is_Calibration': is_calibration,
-#                 'conc_M': conc_val,
-#                 'Intensity': intensity,
-#                 'Confidence_Level': match_row['confidence_level'],
-#                 'daphnia_LC50_48_hr_ug/L': match_row.get('daphnia_LC50_48_hr_ug/L'),
-#                 'algae_EC50_72_hr_ug/L': match_row.get('algae_EC50_72_hr_ug/L'),
-#                 'pimephales_LC50_96_hr_ug/L': match_row.get('pimephales_LC50_96_hr_ug/L')
-#             })
-    
-#     # Convertir en DataFrame
-#     results_df = pd.DataFrame(results)
-    
-#     if results_df.empty:
-#         return pd.DataFrame()
-    
-#     # Garder seulement l'intensité maximale pour chaque composé dans chaque échantillon
-#     max_intensity_df = results_df.loc[
-#         results_df.groupby(['Compound', 'Sample'])['Intensity'].idxmax()
-#     ]
-    
-#     return max_intensity_df
-
-# def get_compound_summary(
-#     input_dir: Path,
-#     compounds_file: Path,
-#     calibration_file: Optional[Path] = None
-# ) -> pd.DataFrame:
-#     """Génère un résumé des composés avec intensité maximale."""
-#     # Charger les données
-#     features_df = pd.read_parquet(input_dir / "feature_matrix/features_complete.parquet")
-#     feature_matrix_df = pd.read_parquet(input_dir / "feature_matrix/feature_matrix.parquet")
-    
-#     # Charger la liste des composés cibles et les échantillons de calibration
-#     target_compounds = load_target_compounds(compounds_file)
-#     calibration_df = load_calibration_samples(calibration_file) if calibration_file else None
-    
-#     if calibration_df is None:
-#         return pd.DataFrame()
-    
-#     # Traiter toutes les données
-#     results_df = process_all_data(
-#         features_df,
-#         feature_matrix_df,
-#         calibration_df
-#     )
-    
-#     if results_df.empty:
-#         return pd.DataFrame()
-    
-#     # Réorganiser les colonnes avec Compound, Sample, Adduct en premier
-#     columns = [
-#         'Compound', 'Sample', 'Adduct',  # Colonnes prioritaires
-#         'SMILES', 'Feature_ID', 'RT', 'DT', 
-#         'CCS', 'Is_Calibration', 'conc_M', 
-#         'Intensity', 'Confidence_Level',
-#         'daphnia_LC50_48_hr_ug/L', 'algae_EC50_72_hr_ug/L', 
-#         'pimephales_LC50_96_hr_ug/L'
-#     ]
-    
-#     return results_df[columns].sort_values(['Compound', 'Sample'])
-
-
 import pandas as pd
 from pathlib import Path
 from typing import List, Optional
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 def get_mass_difference(adduct: str) -> float:
     """Retourne la différence de masse pour chaque adduit."""
@@ -226,7 +108,16 @@ def get_compound_summary(
     """Génère un résumé des composés avec intensité maximale."""
     # Charger les données
     features_df = pd.read_parquet(input_dir / "feature_matrix/features_complete.parquet")
-    feature_matrix_df = pd.read_parquet(input_dir / "feature_matrix/feature_matrix.parquet")
+    
+    # Lecture avec des limites augmentées
+    table = pq.read_table(
+        input_dir / "feature_matrix/feature_matrix.parquet",
+        thrift_string_size_limit=1000*1024*1024,  # 1GB
+        thrift_container_size_limit=1000*1024*1024
+    )
+    
+    # Conversion en DataFrame
+    feature_matrix_df = table.to_pandas()
     
     # Charger la liste des composés cibles et les échantillons de calibration
     target_compounds = load_target_compounds(compounds_file)
@@ -256,6 +147,3 @@ def get_compound_summary(
     ]
     
     return results_df[columns].sort_values(['Compound', 'Sample'])
-
-
-    
